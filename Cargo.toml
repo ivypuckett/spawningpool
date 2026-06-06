@@ -1,0 +1,6 @@
+[workspace]
+members = [
+    "spawningpool",
+    "cli",
+]
+resolver = "2"
