@@ -1,0 +1,11 @@
+[package]
+name = "spawningpool-cli"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "spawningpool"
+path = "src/main.rs"
+
+[dependencies]
+spawningpool = { path = "../spawningpool" }
