@@ -37,6 +37,25 @@ impl ContentBlock {
     pub fn text(text: impl Into<String>) -> Self {
         ContentBlock::Text { text: text.into() }
     }
+
+    /// A successful tool result to feed back to the model.
+    pub fn tool_result(tool_call_id: impl Into<String>, content: impl Into<String>) -> Self {
+        ContentBlock::ToolResult {
+            tool_call_id: tool_call_id.into(),
+            content: content.into(),
+            is_error: false,
+        }
+    }
+
+    /// An error tool result (e.g. a validation failure) to feed back to the
+    /// model so it can retry.
+    pub fn tool_error(tool_call_id: impl Into<String>, content: impl Into<String>) -> Self {
+        ContentBlock::ToolResult {
+            tool_call_id: tool_call_id.into(),
+            content: content.into(),
+            is_error: true,
+        }
+    }
 }
 
 /// The author of a message. Tool results are carried as `ContentBlock`s inside

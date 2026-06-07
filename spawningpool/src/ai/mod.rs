@@ -21,29 +21,36 @@
 //! # }
 //! ```
 //!
-//! ## FUTURE_AGENT: optional runtime tool-call validation
+//! ## Tool-call validation (opt-in)
 //!
-//! Tools in this project are built *dynamically*: [`Tool::parameters`] is a
-//! JSON Schema ([`serde_json::Value`]) assembled at runtime, not derived from a
-//! compile-time Rust type. So the usual `schemars` / `#[derive(JsonSchema)]`
-//! approach does **not** fit here — there is no static type to derive from, and
-//! forcing one would fight the dynamic-agent design. Do not add it.
+//! Tools here are built *dynamically*: [`Tool::parameters`] is a JSON Schema
+//! ([`serde_json::Value`]) assembled at runtime, not derived from a compile-time
+//! Rust type — so `schemars` / `#[derive(JsonSchema)]` deliberately is **not**
+//! used (there is no static type to derive from, and forcing one would fight the
+//! dynamic-agent design).
 //!
-//! What *does* fit is optional, runtime validation of a model's tool-call
-//! `arguments` against the tool's runtime schema. Because the schema is dynamic
-//! there is no compile-time safety net, so a runtime validator is the only
-//! check available — but it should stay opt-in, not forced:
+//! Because the schema is dynamic there is no compile-time safety net, so
+//! [`validate_tool_call`] is the only check available. It is opt-in: the default
+//! path passes a model's tool call through unvalidated. A caller that wants
+//! strictness validates and, on failure, feeds an error result back to the model
+//! to retry:
 //!
-//! - Add a `validate_tool_call(tool: &Tool, call: &ContentBlock)` helper (e.g.
-//!   via the `jsonschema` crate) that checks a `ToolCall`'s `arguments` `Value`
-//!   against the `Tool::parameters` `Value` and returns a structured error.
-//! - Leave the default path unvalidated. A caller that wants strictness calls
-//!   the validator and, on failure, feeds an error `ToolResult` back to the
-//!   model so it can retry — mirroring pi-ai's `validateToolCall`. A caller
-//!   that wants raw pass-through simply never calls it.
-//! - Keep the adapters' best-effort `parse_args` fallback (malformed tool-call
-//!   JSON becomes a `Value::String`) as the transport-level behavior; argument
-//!   *shape* validation is a separate, caller-driven concern layered on top.
+//! ```no_run
+//! # use spawningpool::ai::{validate_tool_call, ContentBlock, Tool};
+//! # fn f(tool: &Tool, call: &ContentBlock) -> Option<ContentBlock> {
+//! if let ContentBlock::ToolCall { id, .. } = call {
+//!     if let Err(e) = validate_tool_call(tool, call) {
+//!         // Hand the violations back to the model so it can fix the call.
+//!         return Some(ContentBlock::tool_error(id, e.to_string()));
+//!     }
+//! }
+//! # None
+//! # }
+//! ```
+//!
+//! The adapters' best-effort `parse_args` fallback (malformed tool-call JSON
+//! becomes a `Value::String`) stays as the transport-level behavior; argument
+//! *shape* validation is this separate, caller-driven concern layered on top.
 
 pub mod catalog;
 pub mod client;
@@ -52,6 +59,7 @@ pub mod model;
 pub mod provider;
 pub(crate) mod providers;
 pub(crate) mod sse;
+pub mod validation;
 
 pub use catalog::{get_model, get_models, get_providers};
 pub use client::Client;
@@ -61,3 +69,4 @@ pub use provider::{
     CompleteOptions, Completion, Error, EventStream, Provider, ProviderRegistry, Reasoning,
     StreamEvent,
 };
+pub use validation::{validate_tool_call, ToolValidationError};
