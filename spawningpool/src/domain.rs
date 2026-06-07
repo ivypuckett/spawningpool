@@ -1,7 +1,7 @@
 //! The definition layer: persisted templates that compile down into the
 //! runtime [`crate::ai`] types.
 //!
-//! Nothing here talks to a provider. A [`ProviderDef`]/[`ModelDef`]/[`Expert`]/
+//! Nothing here talks to a provider. A [`ProviderDef`]/[`ModelDef`]/[`Specialist`]/
 //! [`ToolDef`] is plain, serializable data that `sp define` writes and `sp list`
 //! reads. The bridges ([`ToolDef::to_tool`], [`ModelDef::resolve`],
 //! [`Registry::build_context`], [`Registry::resolve_model`]) lower these
@@ -60,10 +60,10 @@ impl ModelDef {
     }
 }
 
-/// A defined expert (`sp define expert`): the (provider, model, system prompt,
+/// A defined specialist (`sp define specialist`): the (provider, model, system prompt,
 /// tools) template that gets instantiated with a user prompt and called.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Expert {
+pub struct Specialist {
     pub name: String,
     /// References a [`ProviderDef`] by name.
     pub provider: String,
@@ -74,20 +74,20 @@ pub struct Expert {
     #[serde(default)]
     pub tools: Vec<String>,
     /// A tool the model is forced to call (constrained decoding). Consumed when
-    /// the expert is run, not when its context is built.
+    /// the specialist is run, not when its context is built.
     #[serde(default)]
     pub constraint: Option<String>,
     #[serde(default)]
     pub reasoning: Reasoning,
     /// Stream the response incrementally rather than awaiting the full
-    /// completion. A property of the expert, not a per-run flag.
+    /// completion. A property of the specialist, not a per-run flag.
     #[serde(default)]
     pub stream: bool,
 }
 
-impl Expert {
-    /// The per-request options this expert implies: its reasoning effort and,
-    /// from [`Expert::constraint`], a forced tool choice. `max_tokens` and
+impl Specialist {
+    /// The per-request options this specialist implies: its reasoning effort and,
+    /// from [`Specialist::constraint`], a forced tool choice. `max_tokens` and
     /// `api_key` are left at their defaults for the caller to fill in.
     pub fn complete_options(&self) -> CompleteOptions {
         CompleteOptions {
@@ -140,28 +140,28 @@ pub struct Registry {
     #[serde(default)]
     pub models: HashMap<String, ModelDef>,
     #[serde(default)]
-    pub experts: HashMap<String, Expert>,
+    pub specialists: HashMap<String, Specialist>,
     #[serde(default)]
     pub tools: HashMap<String, ToolDef>,
 }
 
 impl Registry {
-    /// Resolve an expert's provider + model into a runtime [`Model`].
-    pub fn resolve_model(&self, expert: &Expert) -> Result<Model, String> {
+    /// Resolve a specialist's provider + model into a runtime [`Model`].
+    pub fn resolve_model(&self, specialist: &Specialist) -> Result<Model, String> {
         let provider = self
             .providers
-            .get(&expert.provider)
-            .ok_or_else(|| format!("unknown provider: {}", expert.provider))?;
+            .get(&specialist.provider)
+            .ok_or_else(|| format!("unknown provider: {}", specialist.provider))?;
         let model = self
             .models
-            .get(&expert.model)
-            .ok_or_else(|| format!("unknown model: {}", expert.model))?;
+            .get(&specialist.model)
+            .ok_or_else(|| format!("unknown model: {}", specialist.model))?;
         Ok(model.resolve(provider))
     }
 
-    /// Resolve an expert's named tools into runtime [`Tool`]s.
-    pub fn resolve_tools(&self, expert: &Expert) -> Result<Vec<Tool>, String> {
-        expert
+    /// Resolve a specialist's named tools into runtime [`Tool`]s.
+    pub fn resolve_tools(&self, specialist: &Specialist) -> Result<Vec<Tool>, String> {
+        specialist
             .tools
             .iter()
             .map(|name| {
@@ -173,14 +173,14 @@ impl Registry {
             .collect()
     }
 
-    /// Compile an expert + a user prompt into a runtime [`Context`] (system
-    /// prompt, the user turn, and the expert's resolved tools).
-    pub fn build_context(&self, expert: &Expert, prompt: &str) -> Result<Context, String> {
+    /// Compile a specialist + a user prompt into a runtime [`Context`] (system
+    /// prompt, the user turn, and the specialist's resolved tools).
+    pub fn build_context(&self, specialist: &Specialist, prompt: &str) -> Result<Context, String> {
         let mut ctx = Context::new(
-            Some(expert.system_prompt.clone()),
+            Some(specialist.system_prompt.clone()),
             vec![Message::user(prompt)],
         );
-        ctx.tools = self.resolve_tools(expert)?;
+        ctx.tools = self.resolve_tools(specialist)?;
         Ok(ctx)
     }
 }
@@ -251,7 +251,7 @@ mod tests {
                 params: vec!["host".to_string()],
             },
         );
-        let expert = Expert {
+        let specialist = Specialist {
             name: "netop".to_string(),
             provider: "anthropic".to_string(),
             model: "claude-opus-4-8".to_string(),
@@ -262,7 +262,7 @@ mod tests {
             stream: false,
         };
 
-        let ctx = registry.build_context(&expert, "ping example.com").unwrap();
+        let ctx = registry.build_context(&specialist, "ping example.com").unwrap();
         assert_eq!(ctx.system.as_deref(), Some("You ping hosts."));
         assert_eq!(ctx.tools.len(), 1);
         assert_eq!(ctx.tools[0].name, "ping");
@@ -273,7 +273,7 @@ mod tests {
     }
 
     #[test]
-    fn resolve_model_pairs_expert_provider_and_model() {
+    fn resolve_model_pairs_specialist_provider_and_model() {
         let mut registry = Registry::default();
         registry
             .providers
@@ -281,7 +281,7 @@ mod tests {
         registry
             .models
             .insert("claude-opus-4-8".to_string(), opus());
-        let expert = Expert {
+        let specialist = Specialist {
             name: "x".to_string(),
             provider: "anthropic".to_string(),
             model: "claude-opus-4-8".to_string(),
@@ -292,14 +292,14 @@ mod tests {
             stream: false,
         };
 
-        let model = registry.resolve_model(&expert).unwrap();
+        let model = registry.resolve_model(&specialist).unwrap();
         assert_eq!(model.id, "claude-opus-4-8");
         assert_eq!(model.api, Api::AnthropicMessages);
     }
 
     #[test]
     fn complete_options_carry_reasoning_and_constraint_as_tool_choice() {
-        let expert = Expert {
+        let specialist = Specialist {
             name: "classifier".to_string(),
             provider: "anthropic".to_string(),
             model: "claude-opus-4-8".to_string(),
@@ -309,14 +309,14 @@ mod tests {
             reasoning: Reasoning::Low,
             stream: false,
         };
-        let opts = expert.complete_options();
+        let opts = specialist.complete_options();
         assert_eq!(opts.tool_choice.as_deref(), Some("classify"));
         assert_eq!(opts.reasoning, Reasoning::Low);
 
         // No constraint -> the model chooses.
-        let unconstrained = Expert {
+        let unconstrained = Specialist {
             constraint: None,
-            ..expert
+            ..specialist
         };
         assert_eq!(unconstrained.complete_options().tool_choice, None);
     }
@@ -324,7 +324,7 @@ mod tests {
     #[test]
     fn resolve_reports_missing_references() {
         let registry = Registry::default();
-        let expert = Expert {
+        let specialist = Specialist {
             name: "x".to_string(),
             provider: "ghost".to_string(),
             model: "nope".to_string(),
@@ -335,11 +335,11 @@ mod tests {
             stream: false,
         };
         assert_eq!(
-            registry.resolve_model(&expert),
+            registry.resolve_model(&specialist),
             Err("unknown provider: ghost".to_string())
         );
         assert_eq!(
-            registry.resolve_tools(&expert),
+            registry.resolve_tools(&specialist),
             Err("unknown tool: absent".to_string())
         );
     }
@@ -353,9 +353,9 @@ mod tests {
         registry
             .models
             .insert("claude-opus-4-8".to_string(), opus());
-        registry.experts.insert(
+        registry.specialists.insert(
             "netop".to_string(),
-            Expert {
+            Specialist {
                 name: "netop".to_string(),
                 provider: "anthropic".to_string(),
                 model: "claude-opus-4-8".to_string(),
