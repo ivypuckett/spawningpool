@@ -39,7 +39,7 @@ impl Provider for OpenAi {
         }
         let parsed: WireResponse =
             serde_json::from_str(&text).map_err(|e| Error::Parse(e.to_string()))?;
-        parsed.into_completion(model)
+        parsed.into_completion()
     }
 
     async fn stream(
@@ -59,7 +59,6 @@ impl Provider for OpenAi {
                 message: text,
             });
         }
-        let model = model.clone();
         let stream = async_stream::try_stream! {
             let mut lines = Box::pin(sse::data_lines(resp));
             let mut acc = StreamAccumulator::default();
@@ -67,7 +66,7 @@ impl Provider for OpenAi {
             while let Some(line) = lines.next().await {
                 let line = line?;
                 if line == "[DONE]" {
-                    yield acc.finish(&model);
+                    yield acc.finish();
                     finished = true;
                     break;
                 }
@@ -78,7 +77,7 @@ impl Provider for OpenAi {
                 }
             }
             if !finished {
-                yield acc.finish(&model);
+                yield acc.finish();
             }
         };
         Ok(Box::pin(stream))
@@ -364,7 +363,7 @@ fn map_finish_reason(reason: Option<&str>) -> StopReason {
 }
 
 impl WireResponse {
-    fn into_completion(self, model: &Model) -> Result<Completion, Error> {
+    fn into_completion(self) -> Result<Completion, Error> {
         let choice = self
             .choices
             .into_iter()
@@ -383,7 +382,6 @@ impl WireResponse {
                 arguments: parse_args(&call.function.arguments),
             });
         }
-        let cost = model.cost_for(self.usage.prompt_tokens, self.usage.completion_tokens);
         Ok(Completion {
             message: Message {
                 role: Role::Assistant,
@@ -393,7 +391,6 @@ impl WireResponse {
             usage: Usage {
                 input: self.usage.prompt_tokens,
                 output: self.usage.completion_tokens,
-                cost,
             },
         })
     }
@@ -474,7 +471,7 @@ impl StreamAccumulator {
         events
     }
 
-    fn finish(&mut self, model: &Model) -> StreamEvent {
+    fn finish(&mut self) -> StreamEvent {
         let mut content = Vec::new();
         if !self.text.is_empty() {
             content.push(ContentBlock::Text {
@@ -488,13 +485,11 @@ impl StreamAccumulator {
                 arguments: parse_args(&call.args),
             });
         }
-        let cost = model.cost_for(self.prompt_tokens, self.completion_tokens);
         StreamEvent::Done {
             stop_reason: map_finish_reason(self.finish_reason.as_deref()),
             usage: Usage {
                 input: self.prompt_tokens,
                 output: self.completion_tokens,
-                cost,
             },
             message: Message {
                 role: Role::Assistant,
@@ -578,7 +573,7 @@ mod tests {
             "usage": {"prompt_tokens": 8, "completion_tokens": 4}
         }"#;
         let parsed: WireResponse = serde_json::from_str(raw).unwrap();
-        let completion = parsed.into_completion(&model()).unwrap();
+        let completion = parsed.into_completion().unwrap();
         assert_eq!(completion.stop_reason, StopReason::ToolUse);
         assert_eq!(
             completion.message.content[0],
@@ -588,14 +583,12 @@ mod tests {
                 arguments: serde_json::json!({ "city": "Paris" }),
             }
         );
-        // Local models are free.
-        assert_eq!(completion.usage.cost.total, 0.0);
         assert_eq!(completion.usage.input, 8);
+        assert_eq!(completion.usage.output, 4);
     }
 
     #[test]
     fn stream_accumulator_assembles_text_then_done() {
-        let model = model();
         let mut acc = StreamAccumulator::default();
         let mut out = Vec::new();
         for chunk in [
@@ -605,7 +598,7 @@ mod tests {
         ] {
             out.extend(acc.handle(&chunk));
         }
-        out.push(acc.finish(&model));
+        out.push(acc.finish());
         assert_eq!(out.len(), 3);
         match out.last().unwrap() {
             StreamEvent::Done {

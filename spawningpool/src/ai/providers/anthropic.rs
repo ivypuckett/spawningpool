@@ -32,7 +32,7 @@ impl Provider for Anthropic {
         let resp = send(http, model, opts, &body).await?;
         let parsed: WireResponse =
             serde_json::from_str(&resp).map_err(|e| Error::Parse(e.to_string()))?;
-        Ok(parsed.into_completion(model))
+        Ok(parsed.into_completion())
     }
 
     async fn stream(
@@ -44,7 +44,6 @@ impl Provider for Anthropic {
     ) -> Result<EventStream, Error> {
         let body = build_request(model, ctx, opts, true);
         let resp = send_streaming(http, model, opts, &body).await?;
-        let model = model.clone();
         let stream = async_stream::try_stream! {
             let mut lines = Box::pin(sse::data_lines(resp));
             let mut acc = StreamAccumulator::default();
@@ -52,7 +51,7 @@ impl Provider for Anthropic {
                 let line = line?;
                 let value: serde_json::Value =
                     serde_json::from_str(&line).map_err(|e| Error::Parse(e.to_string()))?;
-                if let Some(event) = acc.handle(&value, &model) {
+                if let Some(event) = acc.handle(&value) {
                     yield event;
                 }
             }
@@ -275,7 +274,7 @@ fn map_stop_reason(reason: Option<&str>) -> StopReason {
 }
 
 impl WireResponse {
-    fn into_completion(self, model: &Model) -> Completion {
+    fn into_completion(self) -> Completion {
         let content = self
             .content
             .into_iter()
@@ -292,7 +291,6 @@ impl WireResponse {
                 WireResponseBlock::Unknown => None,
             })
             .collect();
-        let cost = model.cost_for(self.usage.input_tokens, self.usage.output_tokens);
         Completion {
             message: Message {
                 role: Role::Assistant,
@@ -302,7 +300,6 @@ impl WireResponse {
             usage: Usage {
                 input: self.usage.input_tokens,
                 output: self.usage.output_tokens,
-                cost,
             },
         }
     }
@@ -329,7 +326,7 @@ struct StreamAccumulator {
 }
 
 impl StreamAccumulator {
-    fn handle(&mut self, value: &serde_json::Value, model: &Model) -> Option<StreamEvent> {
+    fn handle(&mut self, value: &serde_json::Value) -> Option<StreamEvent> {
         match value["type"].as_str()? {
             "message_start" => {
                 self.input_tokens = value["message"]["usage"]["input_tokens"]
@@ -403,7 +400,7 @@ impl StreamAccumulator {
                 }
                 None
             }
-            "message_stop" => Some(self.finish(model)),
+            "message_stop" => Some(self.finish()),
             _ => None,
         }
     }
@@ -415,7 +412,7 @@ impl StreamAccumulator {
         self.blocks[index] = Some(build);
     }
 
-    fn finish(&mut self, model: &Model) -> StreamEvent {
+    fn finish(&mut self) -> StreamEvent {
         let content = self
             .blocks
             .drain(..)
@@ -430,13 +427,11 @@ impl StreamAccumulator {
                 },
             })
             .collect();
-        let cost = model.cost_for(self.input_tokens, self.output_tokens);
         StreamEvent::Done {
             stop_reason: map_stop_reason(self.stop_reason.as_deref()),
             usage: Usage {
                 input: self.input_tokens,
                 output: self.output_tokens,
-                cost,
             },
             message: Message {
                 role: Role::Assistant,
@@ -506,7 +501,7 @@ mod tests {
             "usage": {"input_tokens": 10, "output_tokens": 20}
         }"#;
         let parsed: WireResponse = serde_json::from_str(raw).unwrap();
-        let completion = parsed.into_completion(&model());
+        let completion = parsed.into_completion();
         assert_eq!(completion.stop_reason, StopReason::ToolUse);
         assert_eq!(completion.message.content.len(), 2);
         assert_eq!(
@@ -517,10 +512,8 @@ mod tests {
                 arguments: serde_json::json!({ "city": "Paris" }),
             }
         );
-        // 10/1e6*5 + 20/1e6*25
-        assert!(
-            (completion.usage.cost.total - (10.0 / 1e6 * 5.0 + 20.0 / 1e6 * 25.0)).abs() < 1e-12
-        );
+        assert_eq!(completion.usage.input, 10);
+        assert_eq!(completion.usage.output, 20);
     }
 
     #[test]
@@ -531,14 +524,13 @@ mod tests {
             "usage": {"input_tokens": 1, "output_tokens": 1}
         }"#;
         let parsed: WireResponse = serde_json::from_str(raw).unwrap();
-        let completion = parsed.into_completion(&model());
+        let completion = parsed.into_completion();
         assert_eq!(completion.message.content, vec![ContentBlock::text("hi")]);
         assert_eq!(completion.stop_reason, StopReason::Stop);
     }
 
     #[test]
     fn stream_accumulator_assembles_message_and_usage() {
-        let model = model();
         let mut acc = StreamAccumulator::default();
         let events: Vec<serde_json::Value> = vec![
             serde_json::json!({"type": "message_start", "message": {"usage": {"input_tokens": 5}}}),
@@ -551,7 +543,7 @@ mod tests {
         ];
         let mut out = Vec::new();
         for ev in &events {
-            if let Some(e) = acc.handle(ev, &model) {
+            if let Some(e) = acc.handle(ev) {
                 out.push(e);
             }
         }
