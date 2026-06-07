@@ -12,13 +12,15 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use futures::stream::BoxStream;
+use serde::{Deserialize, Serialize};
 
 use crate::ai::message::{Message, StopReason, Usage};
 use crate::ai::model::{Api, Context};
 
 /// How much the model should reason, mapped onto each provider's native knob
 /// (Anthropic `thinking`/`effort`, OpenAI `reasoning_effort`).
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum Reasoning {
     #[default]
     Off,
