@@ -6,9 +6,6 @@ use serde::Deserialize;
 
 #[derive(Debug, Deserialize)]
 pub struct Taskfile {
-    pub version: Option<String>,
-    #[serde(default)]
-    pub vars: HashMap<String, VarValue>,
     #[serde(default)]
     pub tasks: HashMap<String, Task>,
 }
@@ -22,8 +19,6 @@ pub struct Task {
     pub env: HashMap<String, String>,
     #[serde(default)]
     pub cmds: Vec<Cmd>,
-    #[serde(default)]
-    pub deps: Vec<Dep>,
 }
 
 /// A variable value: either a plain string or a shell command.
@@ -39,6 +34,9 @@ pub enum VarValue {
 #[serde(untagged)]
 pub enum Cmd {
     Shell(String),
+    // Retained so task-call command entries (`- task: build`) deserialize;
+    // its fields are not read when summarizing a task's referenced variables.
+    #[allow(dead_code)]
     TaskCall {
         task: String,
         #[serde(default)]
@@ -46,22 +44,34 @@ pub enum Cmd {
     },
 }
 
-/// A dependency entry: either a task name string or a task call with vars.
-#[derive(Debug, Deserialize)]
-#[serde(untagged)]
-pub enum Dep {
-    Name(String),
-    TaskCall {
-        task: String,
-        #[serde(default)]
-        vars: HashMap<String, VarValue>,
-    },
+/// A task's referenced variables and description.
+#[derive(Debug, PartialEq, Eq)]
+pub struct TaskSummary {
+    pub vars: Vec<String>,
+    pub desc: Option<String>,
 }
 
-pub fn parse_taskfile(path: &Path) -> Result<Taskfile, Box<dyn std::error::Error>> {
+fn parse_taskfile(path: &Path) -> Result<Taskfile, Box<dyn std::error::Error>> {
     let contents = std::fs::read_to_string(path)?;
     let taskfile = serde_yaml::from_str(&contents)?;
     Ok(taskfile)
+}
+
+/// Parse a Taskfile and return a map of task name to its referenced variables
+/// (sorted) and description.
+pub fn summarize(path: &Path) -> Result<HashMap<String, TaskSummary>, Box<dyn std::error::Error>> {
+    let taskfile = parse_taskfile(path)?;
+    let summary = taskfile
+        .tasks
+        .into_iter()
+        .map(|(name, task)| {
+            let mut vars: Vec<String> = task.referenced_vars().into_iter().collect();
+            vars.sort();
+            let desc = task.desc;
+            (name, TaskSummary { vars, desc })
+        })
+        .collect();
+    Ok(summary)
 }
 
 impl Task {
@@ -198,19 +208,36 @@ tasks:
     }
 
     #[test]
-    fn global_vars_parsed() {
-        let tf = parse(
-            r#"
+    fn summarize_maps_name_to_vars_and_desc() {
+        let yaml = r#"
 version: '3'
-vars:
-  GREETING: Hello
 tasks:
-  hi:
+  deploy:
+    desc: "Deploy to {{.ENV}}"
     cmds:
-      - echo "{{.GREETING}}"
-"#,
+      - ./deploy.sh {{.REGION}}
+  build:
+    cmds:
+      - cargo build
+"#;
+        let path = std::env::temp_dir().join(format!("sp_summarize_{}.yml", std::process::id()));
+        std::fs::write(&path, yaml).unwrap();
+        let summary = summarize(&path).unwrap();
+        std::fs::remove_file(&path).ok();
+
+        assert_eq!(
+            summary["deploy"],
+            TaskSummary {
+                vars: vec!["ENV".to_string(), "REGION".to_string()],
+                desc: Some("Deploy to {{.ENV}}".to_string()),
+            }
         );
-        assert!(tf.vars.contains_key("GREETING"));
-        assert!(tf.tasks["hi"].referenced_vars().contains("GREETING"));
+        assert_eq!(
+            summary["build"],
+            TaskSummary {
+                vars: vec![],
+                desc: None,
+            }
+        );
     }
 }
