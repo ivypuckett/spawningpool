@@ -9,11 +9,19 @@
 //!
 //! ```no_run
 //! # async fn run() -> Result<(), Box<dyn std::error::Error>> {
-//! use spawningpool::ai::{get_model, Client, Context, Message, CompleteOptions};
+//! use spawningpool::ai::{Api, Client, Context, Message, Model, CompleteOptions};
 //!
 //! let client = Client::new();
-//! // Pick the provider at runtime — swap "anthropic"/"lmstudio" freely.
-//! let model = get_model("anthropic", "claude-opus-4-8")?;
+//! // A model is just data: which protocol to speak and where to send it.
+//! let model = Model {
+//!     id: "claude-opus-4-8".into(),
+//!     name: "Claude Opus 4.8".into(),
+//!     api: Api::AnthropicMessages,
+//!     provider: "anthropic".into(),
+//!     base_url: "https://api.anthropic.com".into(),
+//!     max_tokens: 4096,
+//!     context_window: 200_000,
+//! };
 //! let ctx = Context::new(None, vec![Message::user("Say hi")]);
 //! let reply = client.complete(&model, &ctx, &CompleteOptions::default()).await?;
 //! println!("{:?}", reply.message.content);
@@ -61,7 +69,6 @@ pub(crate) mod providers;
 pub(crate) mod sse;
 pub mod validation;
 
-pub use catalog::{get_model, get_models, get_providers};
 pub use client::Client;
 pub use message::{ContentBlock, Message, Role, StopReason, Usage};
 pub use model::{Api, Context, Model, Tool};

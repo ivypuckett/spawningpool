@@ -527,10 +527,10 @@ fn parse_args(raw: &str) -> serde_json::Value {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ai::catalog::get_model;
+    use crate::ai::catalog::lmstudio_model;
 
     fn model() -> Model {
-        get_model("lmstudio", "local-model").unwrap()
+        lmstudio_model("local-model")
     }
 
     #[test]

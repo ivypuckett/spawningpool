@@ -464,10 +464,18 @@ fn parse_args(raw: &str) -> serde_json::Value {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ai::catalog::get_model;
+    use crate::ai::model::Api;
 
     fn model() -> Model {
-        get_model("anthropic", "claude-opus-4-8").unwrap()
+        Model {
+            id: "claude-opus-4-8".to_string(),
+            name: "Claude Opus 4.8".to_string(),
+            api: Api::AnthropicMessages,
+            provider: "anthropic".to_string(),
+            base_url: "https://api.anthropic.com".to_string(),
+            max_tokens: 4096,
+            context_window: 200_000,
+        }
     }
 
     #[test]
