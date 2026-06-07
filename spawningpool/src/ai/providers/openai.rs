@@ -94,6 +94,8 @@ struct WireRequest {
     #[serde(skip_serializing_if = "Vec::is_empty")]
     tools: Vec<WireTool>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    tool_choice: Option<WireToolChoice>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     reasoning_effort: Option<&'static str>,
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     stream: bool,
@@ -138,6 +140,18 @@ struct WireToolFunction {
     parameters: serde_json::Value,
 }
 
+#[derive(Serialize)]
+struct WireToolChoice {
+    #[serde(rename = "type")]
+    kind: &'static str,
+    function: WireToolChoiceFunction,
+}
+
+#[derive(Serialize)]
+struct WireToolChoiceFunction {
+    name: String,
+}
+
 fn build_request(
     model: &Model,
     ctx: &Context,
@@ -172,6 +186,10 @@ fn build_request(
                 },
             })
             .collect(),
+        tool_choice: opts.tool_choice.as_ref().map(|name| WireToolChoice {
+            kind: "function",
+            function: WireToolChoiceFunction { name: name.clone() },
+        }),
         reasoning_effort: match opts.reasoning {
             Reasoning::Off => None,
             Reasoning::Low => Some("low"),
@@ -559,6 +577,25 @@ mod tests {
         let call = &body["messages"][0]["tool_calls"][0];
         assert_eq!(call["function"]["name"], "get_weather");
         assert_eq!(call["function"]["arguments"], r#"{"city":"Paris"}"#);
+    }
+
+    #[test]
+    fn forced_tool_choice_serializes_and_default_omits_it() {
+        let opts = CompleteOptions {
+            tool_choice: Some("get_weather".into()),
+            ..Default::default()
+        };
+        let body = build_request(&model(), &Context::default(), &opts, false);
+        assert_eq!(body["tool_choice"]["type"], "function");
+        assert_eq!(body["tool_choice"]["function"]["name"], "get_weather");
+
+        let default = build_request(
+            &model(),
+            &Context::default(),
+            &CompleteOptions::default(),
+            false,
+        );
+        assert!(default.get("tool_choice").is_none());
     }
 
     #[test]
