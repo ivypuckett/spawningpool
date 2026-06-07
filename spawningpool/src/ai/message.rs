@@ -1,0 +1,147 @@
+//! Provider-agnostic conversation types.
+//!
+//! Everything in the core speaks this vocabulary. Each provider adapter is
+//! responsible for translating these types to and from its own wire format,
+//! so the rest of the crate never branches on which provider is in use.
+
+use serde::{Deserialize, Serialize};
+
+/// A single typed piece of message content.
+///
+/// Content is always an array of these blocks, which lets interleaved
+/// thinking, text, and tool calls be represented uniformly regardless of
+/// provider.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "camelCase")]
+pub enum ContentBlock {
+    Text {
+        text: String,
+    },
+    Thinking {
+        thinking: String,
+    },
+    ToolCall {
+        id: String,
+        name: String,
+        arguments: serde_json::Value,
+    },
+    ToolResult {
+        tool_call_id: String,
+        content: String,
+        #[serde(default)]
+        is_error: bool,
+    },
+}
+
+impl ContentBlock {
+    pub fn text(text: impl Into<String>) -> Self {
+        ContentBlock::Text { text: text.into() }
+    }
+}
+
+/// The author of a message. Tool results are carried as `ContentBlock`s inside
+/// a `User` message, matching how both target providers expect them.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Role {
+    User,
+    Assistant,
+}
+
+/// One turn in a conversation.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Message {
+    pub role: Role,
+    pub content: Vec<ContentBlock>,
+}
+
+impl Message {
+    /// A user turn containing a single text block.
+    pub fn user(text: impl Into<String>) -> Self {
+        Message {
+            role: Role::User,
+            content: vec![ContentBlock::text(text)],
+        }
+    }
+
+    /// An assistant turn containing a single text block.
+    pub fn assistant(text: impl Into<String>) -> Self {
+        Message {
+            role: Role::Assistant,
+            content: vec![ContentBlock::text(text)],
+        }
+    }
+}
+
+/// Why the model stopped generating, normalized across providers.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum StopReason {
+    /// Natural completion.
+    Stop,
+    /// Hit the output token cap.
+    Length,
+    /// The model wants one or more tools executed.
+    ToolUse,
+    /// The model declined to answer.
+    Refusal,
+    /// The provider reported an error stop.
+    Error,
+}
+
+/// Computed dollar cost of a single response, in USD.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Cost {
+    pub input: f64,
+    pub output: f64,
+    pub total: f64,
+}
+
+/// Token usage plus its computed cost.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Usage {
+    pub input: u32,
+    pub output: u32,
+    pub cost: Cost,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn content_block_round_trips_through_json() {
+        let blocks = vec![
+            ContentBlock::text("hello"),
+            ContentBlock::Thinking {
+                thinking: "hmm".into(),
+            },
+            ContentBlock::ToolCall {
+                id: "call_1".into(),
+                name: "get_weather".into(),
+                arguments: serde_json::json!({ "city": "Paris" }),
+            },
+            ContentBlock::ToolResult {
+                tool_call_id: "call_1".into(),
+                content: "sunny".into(),
+                is_error: false,
+            },
+        ];
+        let json = serde_json::to_string(&blocks).unwrap();
+        let back: Vec<ContentBlock> = serde_json::from_str(&json).unwrap();
+        assert_eq!(blocks, back);
+    }
+
+    #[test]
+    fn tool_call_block_uses_camel_case_tag_fields() {
+        let json = serde_json::to_value(ContentBlock::ToolResult {
+            tool_call_id: "x".into(),
+            content: "y".into(),
+            is_error: true,
+        })
+        .unwrap();
+        assert_eq!(json["type"], "toolResult");
+        assert_eq!(json["tool_call_id"], "x");
+        assert_eq!(json["is_error"], true);
+    }
+}
