@@ -89,20 +89,16 @@ pub enum StopReason {
     Error,
 }
 
-/// Computed dollar cost of a single response, in USD.
-#[derive(Clone, Debug, Default, PartialEq)]
-pub struct Cost {
-    pub input: f64,
-    pub output: f64,
-    pub total: f64,
-}
-
-/// Token usage plus its computed cost.
+/// Token usage for a single response.
+///
+/// Token counts come straight from the provider and never go stale. Dollar
+/// cost is deliberately *not* computed here: pricing changes over time and is
+/// the caller's concern — multiply these counts by whatever current rates you
+/// maintain.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Usage {
     pub input: u32,
     pub output: u32,
-    pub cost: Cost,
 }
 
 #[cfg(test)]

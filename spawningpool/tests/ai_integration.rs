@@ -38,7 +38,6 @@ fn local_model(base_url: String) -> Model {
         base_url,
         max_tokens: 256,
         context_window: 8192,
-        cost: spawningpool::ai::CostRates::FREE,
     }
 }
 

@@ -21,27 +21,29 @@
 //! # }
 //! ```
 //!
-//! ## FUTURE_AGENT: typed tool-parameter validation
+//! ## FUTURE_AGENT: optional runtime tool-call validation
 //!
-//! Tool parameters are currently an untyped [`serde_json::Value`] JSON Schema
-//! ([`Tool::parameters`]), and tool-call `arguments` returned by a model are
-//! passed through unvalidated. A future task should add a typed validation
-//! layer so callers define tool inputs as Rust types and tool calls are
-//! checked against the schema before reaching application code. Concretely:
+//! Tools in this project are built *dynamically*: [`Tool::parameters`] is a
+//! JSON Schema ([`serde_json::Value`]) assembled at runtime, not derived from a
+//! compile-time Rust type. So the usual `schemars` / `#[derive(JsonSchema)]`
+//! approach does **not** fit here — there is no static type to derive from, and
+//! forcing one would fight the dynamic-agent design. Do not add it.
 //!
-//! - Add a `schemars` dependency and let `Tool` be constructed from a type
-//!   implementing `JsonSchema` (e.g. `Tool::typed::<MyArgs>(name, desc)`),
-//!   deriving `parameters` from the schema instead of hand-written JSON.
-//! - Add a `validate_tool_call(tools, &ContentBlock::ToolCall { .. })` helper
-//!   (using the `jsonschema` crate) that returns a structured error when a
-//!   model's `arguments` don't match the declared schema, so the caller can
-//!   feed an error `ToolResult` back to the model and let it retry — mirroring
-//!   how pi-ai surfaces `validateToolCall` failures.
-//! - Keep the untyped `Tool::parameters` path working; typed construction is
-//!   additive sugar over it, not a replacement.
-//! - When parsing tool-call arguments in the adapters, surface malformed JSON
-//!   as a typed error rather than the current best-effort
-//!   `Value::String` fallback (see `parse_args` in the adapter modules).
+//! What *does* fit is optional, runtime validation of a model's tool-call
+//! `arguments` against the tool's runtime schema. Because the schema is dynamic
+//! there is no compile-time safety net, so a runtime validator is the only
+//! check available — but it should stay opt-in, not forced:
+//!
+//! - Add a `validate_tool_call(tool: &Tool, call: &ContentBlock)` helper (e.g.
+//!   via the `jsonschema` crate) that checks a `ToolCall`'s `arguments` `Value`
+//!   against the `Tool::parameters` `Value` and returns a structured error.
+//! - Leave the default path unvalidated. A caller that wants strictness calls
+//!   the validator and, on failure, feeds an error `ToolResult` back to the
+//!   model so it can retry — mirroring pi-ai's `validateToolCall`. A caller
+//!   that wants raw pass-through simply never calls it.
+//! - Keep the adapters' best-effort `parse_args` fallback (malformed tool-call
+//!   JSON becomes a `Value::String`) as the transport-level behavior; argument
+//!   *shape* validation is a separate, caller-driven concern layered on top.
 
 pub mod catalog;
 pub mod client;
@@ -53,8 +55,8 @@ pub(crate) mod sse;
 
 pub use catalog::{get_model, get_models, get_providers};
 pub use client::Client;
-pub use message::{ContentBlock, Cost, Message, Role, StopReason, Usage};
-pub use model::{Api, Context, CostRates, Model, Tool};
+pub use message::{ContentBlock, Message, Role, StopReason, Usage};
+pub use model::{Api, Context, Model, Tool};
 pub use provider::{
     CompleteOptions, Completion, Error, EventStream, Provider, ProviderRegistry, Reasoning,
     StreamEvent,
