@@ -1597,6 +1597,7 @@ name = "spawningpool-cli"
 version = "0.1.0"
 dependencies = [
  "clap",
+ "futures",
  "serde_json",
  "spawningpool",
  "tokio",
