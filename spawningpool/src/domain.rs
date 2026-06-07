@@ -79,6 +79,10 @@ pub struct Expert {
     pub constraint: Option<String>,
     #[serde(default)]
     pub reasoning: Reasoning,
+    /// Stream the response incrementally rather than awaiting the full
+    /// completion. A property of the expert, not a per-run flag.
+    #[serde(default)]
+    pub stream: bool,
 }
 
 impl Expert {
@@ -255,6 +259,7 @@ mod tests {
             tools: vec!["ping".to_string()],
             constraint: None,
             reasoning: Reasoning::Off,
+            stream: false,
         };
 
         let ctx = registry.build_context(&expert, "ping example.com").unwrap();
@@ -284,6 +289,7 @@ mod tests {
             tools: vec![],
             constraint: None,
             reasoning: Reasoning::default(),
+            stream: false,
         };
 
         let model = registry.resolve_model(&expert).unwrap();
@@ -301,6 +307,7 @@ mod tests {
             tools: vec!["classify".to_string()],
             constraint: Some("classify".to_string()),
             reasoning: Reasoning::Low,
+            stream: false,
         };
         let opts = expert.complete_options();
         assert_eq!(opts.tool_choice.as_deref(), Some("classify"));
@@ -325,6 +332,7 @@ mod tests {
             tools: vec!["absent".to_string()],
             constraint: None,
             reasoning: Reasoning::default(),
+            stream: false,
         };
         assert_eq!(
             registry.resolve_model(&expert),
@@ -355,6 +363,7 @@ mod tests {
                 tools: vec![],
                 constraint: Some("ping".to_string()),
                 reasoning: Reasoning::High,
+                stream: true,
             },
         );
 

@@ -73,6 +73,7 @@ mod tests {
                 tools: vec![],
                 constraint: None,
                 reasoning: Reasoning::Off,
+                stream: false,
             },
         );
 

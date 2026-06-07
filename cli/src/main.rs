@@ -6,8 +6,10 @@ mod store;
 use std::path::PathBuf;
 
 use clap::{Parser, Subcommand};
-use spawningpool::ai::{Api, Client, ContentBlock, Reasoning};
+use futures::StreamExt;
+use spawningpool::ai::{Api, Client, ContentBlock, Reasoning, StreamEvent};
 use spawningpool::{Expert, ModelDef, ProviderDef, ToolDef};
+use std::io::Write;
 
 #[derive(Parser)]
 #[command(name = "sp", bin_name = "spawningpool", version, about)]
@@ -93,6 +95,9 @@ enum DefineEntity {
         constraint: Option<String>,
         #[arg(long, default_value = "off")]
         reasoning: String,
+        /// Stream the response incrementally when this expert runs.
+        #[arg(long)]
+        stream: bool,
     },
     /// Define a tool from a Taskfile task; its desc and `{{.VARS}}` become the
     /// description and parameters.
@@ -151,8 +156,22 @@ async fn run_expert(name: &str, prompt: &str) -> Result<(), String> {
         }
     }
 
-    let completion = Client::new()
-        .complete(&model, &ctx, &opts)
+    let client = Client::new();
+    if expert.stream {
+        stream_completion(&client, &model, &ctx, &opts).await
+    } else {
+        await_completion(&client, &model, &ctx, &opts).await
+    }
+}
+
+async fn await_completion(
+    client: &Client,
+    model: &spawningpool::ai::Model,
+    ctx: &spawningpool::ai::Context,
+    opts: &spawningpool::ai::CompleteOptions,
+) -> Result<(), String> {
+    let completion = client
+        .complete(model, ctx, opts)
         .await
         .map_err(|e| e.to_string())?;
 
@@ -169,6 +188,47 @@ async fn run_expert(name: &str, prompt: &str) -> Result<(), String> {
         "[usage] {} in / {} out",
         completion.usage.input, completion.usage.output
     );
+    Ok(())
+}
+
+async fn stream_completion(
+    client: &Client,
+    model: &spawningpool::ai::Model,
+    ctx: &spawningpool::ai::Context,
+    opts: &spawningpool::ai::CompleteOptions,
+) -> Result<(), String> {
+    let mut events = client
+        .stream(model, ctx, opts)
+        .await
+        .map_err(|e| e.to_string())?;
+    let mut stdout = std::io::stdout();
+    let mut printed_text = false;
+
+    while let Some(event) = events.next().await {
+        match event.map_err(|e| e.to_string())? {
+            StreamEvent::TextDelta { delta, .. } => {
+                print!("{delta}");
+                stdout.flush().ok();
+                printed_text = true;
+            }
+            StreamEvent::Done { usage, message, .. } => {
+                if printed_text {
+                    println!();
+                }
+                // Tool-call arguments only make sense once fully assembled.
+                for block in &message.content {
+                    if let ContentBlock::ToolCall {
+                        name, arguments, ..
+                    } = block
+                    {
+                        println!("[tool-call] {name} {arguments}");
+                    }
+                }
+                eprintln!("[usage] {} in / {} out", usage.input, usage.output);
+            }
+            StreamEvent::ThinkingDelta { .. } | StreamEvent::ToolCallDelta { .. } => {}
+        }
+    }
     Ok(())
 }
 
@@ -230,6 +290,7 @@ fn define(entity: DefineEntity) -> Result<(), String> {
             tools,
             constraint,
             reasoning,
+            stream,
         } => {
             let def = Expert {
                 name: name.clone(),
@@ -239,6 +300,7 @@ fn define(entity: DefineEntity) -> Result<(), String> {
                 tools: parse_list(tools),
                 constraint,
                 reasoning: parse_reasoning(&reasoning)?,
+                stream,
             };
             registry.experts.insert(name.clone(), def);
             format!("expert {name}")
