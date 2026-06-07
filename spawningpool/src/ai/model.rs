@@ -54,7 +54,7 @@ pub struct Model {
 /// `parameters` is a JSON Schema, built dynamically at runtime. Tool-call
 /// arguments are passed through unvalidated by default; see the FUTURE_AGENT
 /// note in [`crate::ai`] for the planned opt-in runtime validator.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Tool {
     pub name: String,
     pub description: String,
