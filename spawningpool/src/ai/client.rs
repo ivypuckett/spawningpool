@@ -77,12 +77,14 @@ impl Client {
     }
 
     /// Discover the models a running LM Studio instance currently has loaded,
-    /// via `GET {base_url}/v1/models`.
+    /// via `GET {base_url}/v1/models`. Discovery is only meaningful for an
+    /// OpenAI-compatible server we can query; hosted providers are not listed.
     pub async fn list_models(&self, provider: &str) -> Result<Vec<Model>, Error> {
         match provider {
-            "anthropic" => Ok(crate::ai::catalog::get_models("anthropic")),
             "lmstudio" => crate::ai::providers::openai::list_models(&self.http).await,
-            other => Err(Error::Config(format!("unknown provider: {other}"))),
+            other => Err(Error::Config(format!(
+                "model discovery is only available for openai-compatible providers like lmstudio, not {other}"
+            ))),
         }
     }
 }
