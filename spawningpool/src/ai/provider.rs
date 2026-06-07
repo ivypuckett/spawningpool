@@ -35,6 +35,11 @@ pub struct CompleteOptions {
     /// Output token cap. Defaults to the model's `max_tokens` when `None`.
     pub max_tokens: Option<u32>,
     pub reasoning: Reasoning,
+    /// Force the model to call a specific tool by name (constrained decoding).
+    /// `None` lets the model choose. The named tool must be present in the
+    /// request's tool list. Note: Anthropic rejects a forced tool combined with
+    /// extended thinking, so pair this with [`Reasoning::Off`].
+    pub tool_choice: Option<String>,
     /// Explicit API key, overriding any environment variable.
     pub api_key: Option<String>,
 }

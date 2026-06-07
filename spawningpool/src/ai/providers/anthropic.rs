@@ -72,6 +72,8 @@ struct WireRequest<'a> {
     #[serde(skip_serializing_if = "Vec::is_empty")]
     tools: Vec<WireTool>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    tool_choice: Option<WireToolChoice>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     thinking: Option<Thinking>,
     #[serde(skip_serializing_if = "Option::is_none")]
     output_config: Option<OutputConfig>,
@@ -90,6 +92,13 @@ struct WireTool {
     name: String,
     description: String,
     input_schema: serde_json::Value,
+}
+
+#[derive(Serialize)]
+struct WireToolChoice {
+    #[serde(rename = "type")]
+    kind: &'static str,
+    name: String,
 }
 
 #[derive(Serialize)]
@@ -129,6 +138,10 @@ fn build_request(
                 input_schema: t.parameters.clone(),
             })
             .collect(),
+        tool_choice: opts.tool_choice.as_ref().map(|name| WireToolChoice {
+            kind: "tool",
+            name: name.clone(),
+        }),
         // Opus 4.8/4.7 accept only adaptive thinking; effort carries the level.
         thinking: thinking.map(|_| Thinking { kind: "adaptive" }),
         output_config: output_config.map(|effort| OutputConfig { effort }),
@@ -477,6 +490,25 @@ mod tests {
         assert_eq!(body["messages"][0]["content"][0]["tool_use_id"], "call_1");
         // Off reasoning sends no thinking field.
         assert!(body.get("thinking").is_none());
+    }
+
+    #[test]
+    fn forced_tool_choice_serializes_and_default_omits_it() {
+        let opts = CompleteOptions {
+            tool_choice: Some("get_weather".into()),
+            ..Default::default()
+        };
+        let body = build_request(&model(), &Context::default(), &opts, false);
+        assert_eq!(body["tool_choice"]["type"], "tool");
+        assert_eq!(body["tool_choice"]["name"], "get_weather");
+
+        let default = build_request(
+            &model(),
+            &Context::default(),
+            &CompleteOptions::default(),
+            false,
+        );
+        assert!(default.get("tool_choice").is_none());
     }
 
     #[test]

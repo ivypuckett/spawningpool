@@ -17,7 +17,7 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
-use crate::ai::{Api, Context, Message, Model, Reasoning, Tool};
+use crate::ai::{Api, CompleteOptions, Context, Message, Model, Reasoning, Tool};
 
 /// A defined provider (`sp define provider`): a name bound to a wire protocol,
 /// endpoint, and the env var holding its API key. Generalizes the catalog's
@@ -79,6 +79,19 @@ pub struct Expert {
     pub constraint: Option<String>,
     #[serde(default)]
     pub reasoning: Reasoning,
+}
+
+impl Expert {
+    /// The per-request options this expert implies: its reasoning effort and,
+    /// from [`Expert::constraint`], a forced tool choice. `max_tokens` and
+    /// `api_key` are left at their defaults for the caller to fill in.
+    pub fn complete_options(&self) -> CompleteOptions {
+        CompleteOptions {
+            reasoning: self.reasoning,
+            tool_choice: self.constraint.clone(),
+            ..Default::default()
+        }
+    }
 }
 
 /// A defined tool (`sp define tool`), backed by one Taskfile task. The task's
@@ -276,6 +289,29 @@ mod tests {
         let model = registry.resolve_model(&expert).unwrap();
         assert_eq!(model.id, "claude-opus-4-8");
         assert_eq!(model.api, Api::AnthropicMessages);
+    }
+
+    #[test]
+    fn complete_options_carry_reasoning_and_constraint_as_tool_choice() {
+        let expert = Expert {
+            name: "classifier".to_string(),
+            provider: "anthropic".to_string(),
+            model: "claude-opus-4-8".to_string(),
+            system_prompt: String::new(),
+            tools: vec!["classify".to_string()],
+            constraint: Some("classify".to_string()),
+            reasoning: Reasoning::Low,
+        };
+        let opts = expert.complete_options();
+        assert_eq!(opts.tool_choice.as_deref(), Some("classify"));
+        assert_eq!(opts.reasoning, Reasoning::Low);
+
+        // No constraint -> the model chooses.
+        let unconstrained = Expert {
+            constraint: None,
+            ..expert
+        };
+        assert_eq!(unconstrained.complete_options().tool_choice, None);
     }
 
     #[test]
