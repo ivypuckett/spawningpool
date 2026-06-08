@@ -625,6 +625,65 @@ mod tests {
     }
 
     #[test]
+    fn reasoning_effort_maps_per_level_and_off_is_omitted() {
+        let off = build_request(
+            &model(),
+            &Context::default(),
+            &CompleteOptions::default(),
+            false,
+        );
+        assert!(off.get("reasoning_effort").is_none());
+
+        for (level, effort) in [
+            (Reasoning::Low, "low"),
+            (Reasoning::Medium, "medium"),
+            (Reasoning::High, "high"),
+        ] {
+            let opts = CompleteOptions {
+                reasoning: level,
+                ..Default::default()
+            };
+            let body = build_request(&model(), &Context::default(), &opts, false);
+            assert_eq!(body["reasoning_effort"], effort);
+        }
+    }
+
+    #[test]
+    fn parses_text_only_response() {
+        let raw = r#"{
+            "choices": [{"message": {"content": "hello"}, "finish_reason": "stop"}],
+            "usage": {"prompt_tokens": 2, "completion_tokens": 1}
+        }"#;
+        let parsed: WireResponse = serde_json::from_str(raw).unwrap();
+        let completion = parsed.into_completion().unwrap();
+        assert_eq!(
+            completion.message.content,
+            vec![ContentBlock::text("hello")]
+        );
+        assert_eq!(completion.stop_reason, StopReason::Stop);
+    }
+
+    #[test]
+    fn response_without_choices_is_a_parse_error() {
+        let raw = r#"{"choices": [], "usage": {"prompt_tokens": 0, "completion_tokens": 0}}"#;
+        let parsed: WireResponse = serde_json::from_str(raw).unwrap();
+        assert!(matches!(parsed.into_completion(), Err(Error::Parse(_))));
+    }
+
+    #[test]
+    fn finish_reasons_map_to_unified_variants() {
+        assert_eq!(map_finish_reason(Some("stop")), StopReason::Stop);
+        assert_eq!(map_finish_reason(Some("length")), StopReason::Length);
+        assert_eq!(map_finish_reason(Some("tool_calls")), StopReason::ToolUse);
+        assert_eq!(
+            map_finish_reason(Some("content_filter")),
+            StopReason::Refusal
+        );
+        assert_eq!(map_finish_reason(Some("something_new")), StopReason::Error);
+        assert_eq!(map_finish_reason(None), StopReason::Error);
+    }
+
+    #[test]
     fn stream_accumulator_assembles_text_then_done() {
         let mut acc = StreamAccumulator::default();
         let mut out = Vec::new();
