@@ -1,8 +1,6 @@
 //! `sp` — the spawningpool CLI. Defines providers, models, specialists, and tools
 //! into a persisted [`Registry`], and runs a specialist against a prompt.
 
-mod store;
-
 use std::path::{Path, PathBuf};
 
 use clap::{Parser, Subcommand};
@@ -165,7 +163,7 @@ async fn run(cli: Cli) -> Result<(), String> {
 /// provider → model → specialist → run progression, the exact next command,
 /// and any provider whose API-key env var isn't set.
 fn status() -> Result<(), String> {
-    let registry = store::load()?;
+    let registry = spawningpool::store::load()?;
     println!("{}", onboarding_message(&registry));
     for warning in unset_key_warnings(&registry, |env| std::env::var_os(env).is_some()) {
         eprintln!("{warning}");
@@ -338,7 +336,7 @@ fn unset_key_warnings(registry: &Registry, is_set: impl Fn(&str) -> bool) -> Vec
 const MAX_TURNS: usize = 16;
 
 async fn run_specialist(name: &str, prompt: &str) -> Result<(), String> {
-    let registry = store::load()?;
+    let registry = spawningpool::store::load()?;
     let specialist = registry
         .specialists
         .get(name)
@@ -519,7 +517,7 @@ async fn list(kind: ListKind) -> Result<(), String> {
     if let ListKind::Models { remote: true } = kind {
         return list_remote_models().await;
     }
-    let registry = store::load()?;
+    let registry = spawningpool::store::load()?;
     let mut names: Vec<&String> = match kind {
         ListKind::Specialists => registry.specialists.keys().collect(),
         ListKind::Providers => registry.providers.keys().collect(),
@@ -552,7 +550,7 @@ async fn list_remote_models() -> Result<(), String> {
 /// Print an entity's full definition as pretty JSON, or error if it is absent.
 /// Plain serializable definitions never fail to render.
 fn show(entity: ShowEntity) -> Result<(), String> {
-    let registry = store::load()?;
+    let registry = spawningpool::store::load()?;
     let (found, what) = match entity {
         ShowEntity::Specialist { name } => (
             registry
@@ -593,7 +591,7 @@ fn show(entity: ShowEntity) -> Result<(), String> {
 }
 
 fn define(entity: DefineEntity) -> Result<(), String> {
-    let mut registry = store::load()?;
+    let mut registry = spawningpool::store::load()?;
     let what = match entity {
         DefineEntity::Provider {
             name,
@@ -677,13 +675,13 @@ fn define(entity: DefineEntity) -> Result<(), String> {
             format!("tool {name}")
         }
     };
-    store::save(&registry)?;
+    spawningpool::store::save(&registry)?;
     println!("defined {what}");
     Ok(())
 }
 
 fn delete(entity: DeleteEntity) -> Result<(), String> {
-    let mut registry = store::load()?;
+    let mut registry = spawningpool::store::load()?;
     // Collect any entities that still reference what we're about to remove,
     // before removing it, so we can warn about the references it leaves dangling.
     let (removed, what, kind, name, referrers) = match entity {
@@ -728,7 +726,7 @@ fn delete(entity: DeleteEntity) -> Result<(), String> {
     if !removed {
         return Err(format!("no such {what}"));
     }
-    store::save(&registry)?;
+    spawningpool::store::save(&registry)?;
     println!("deleted {what}");
     warn_orphans(kind, &name, &referrers);
     Ok(())
@@ -906,6 +904,10 @@ fn resolve_script(script: &Path) -> Result<PathBuf, String> {
 mod tests {
     use super::*;
 
+    /// Serializes the tests below that point `$SPAWNINGPOOL_REGISTRY` at a temp
+    /// file, since that env var is process-wide and tests otherwise run parallel.
+    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     #[test]
     fn parse_list_splits_and_trims() {
         assert_eq!(
@@ -1050,7 +1052,7 @@ mod tests {
 
     #[test]
     fn define_list_show_and_delete_round_trip_through_the_store() {
-        let _guard = store::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let saved = std::env::var_os("SPAWNINGPOOL_REGISTRY");
         let dir = std::env::temp_dir().join(format!("sp_cli_define_{}", std::process::id()));
         let path = dir.join("registry.json");
@@ -1065,7 +1067,10 @@ mod tests {
         .unwrap();
 
         // The provider is persisted and reloads from disk.
-        assert!(store::load().unwrap().providers.contains_key("anthropic"));
+        assert!(spawningpool::store::load()
+            .unwrap()
+            .providers
+            .contains_key("anthropic"));
         // Listing succeeds against the populated registry. Driven on a local
         // runtime rather than `#[tokio::test]` so the env-serializing guard is
         // never held across an await point.
@@ -1089,7 +1094,10 @@ mod tests {
             name: "anthropic".into(),
         })
         .unwrap();
-        assert!(!store::load().unwrap().providers.contains_key("anthropic"));
+        assert!(!spawningpool::store::load()
+            .unwrap()
+            .providers
+            .contains_key("anthropic"));
 
         // Deleting something absent is an error.
         let err = delete(DeleteEntity::Provider {
@@ -1104,7 +1112,7 @@ mod tests {
 
     #[test]
     fn define_specialist_rejects_tools_and_constraint_together() {
-        let _guard = store::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let saved = std::env::var_os("SPAWNINGPOOL_REGISTRY");
         let dir = std::env::temp_dir().join(format!("sp_cli_val_{}", std::process::id()));
         let path = dir.join("registry.json");
