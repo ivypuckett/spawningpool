@@ -31,7 +31,11 @@ impl FromStr for Api {
         match s {
             "anthropic-messages" | "anthropic" => Ok(Api::AnthropicMessages),
             "openai-completions" | "openai" => Ok(Api::OpenAiCompletions),
-            other => Err(format!("unknown api: {other}")),
+            other => Err(format!(
+                "unknown api '{other}'\n\n  Expected one of:\n      \
+                 anthropic-messages  (alias: anthropic)\n      \
+                 openai-completions  (alias: openai)"
+            )),
         }
     }
 }
@@ -96,6 +100,10 @@ mod tests {
             Ok(Api::OpenAiCompletions)
         );
         assert_eq!(Api::from_str("openai"), Ok(Api::OpenAiCompletions));
-        assert!(Api::from_str("nope").is_err());
+
+        // An unknown api names the valid options rather than just rejecting.
+        let err = Api::from_str("nope").unwrap_err();
+        assert!(err.contains("anthropic-messages"));
+        assert!(err.contains("openai-completions"));
     }
 }
