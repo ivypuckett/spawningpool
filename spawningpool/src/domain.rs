@@ -125,15 +125,13 @@ impl Specialist {
     }
 }
 
-/// A defined tool (`sp define tool`), backed by one Taskfile task. The task's
-/// `desc` becomes the description and its referenced `{{.VARS}}` become the
-/// parameters — see [`crate::summarize`].
+/// A defined tool (`sp define tool`), backed by one executable script. The
+/// script's `# desc:` header becomes the description and its `# params:` header
+/// the parameters — see [`crate::summarize`].
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ToolDef {
     pub name: String,
-    pub taskfile: PathBuf,
-    /// Task name within the Taskfile.
-    pub task: String,
+    pub script: PathBuf,
     pub description: String,
     pub params: Vec<String>,
 }
@@ -251,8 +249,7 @@ mod tests {
     fn tool_def_lowers_vars_into_required_string_params() {
         let tool = ToolDef {
             name: "deploy".to_string(),
-            taskfile: PathBuf::from("Taskfile.yml"),
-            task: "deploy".to_string(),
+            script: PathBuf::from("deploy.sh"),
             description: "Deploy a service".to_string(),
             params: vec!["env".to_string(), "region".to_string()],
         }
@@ -274,8 +271,7 @@ mod tests {
             "ping".to_string(),
             ToolDef {
                 name: "ping".to_string(),
-                taskfile: PathBuf::from("Taskfile.yml"),
-                task: "ping".to_string(),
+                script: PathBuf::from("ping.sh"),
                 description: "Ping a host".to_string(),
                 params: vec!["host".to_string()],
             },
@@ -402,8 +398,7 @@ mod tests {
             "classify".to_string(),
             ToolDef {
                 name: "classify".to_string(),
-                taskfile: PathBuf::from("Taskfile.yml"),
-                task: "classify".to_string(),
+                script: PathBuf::from("classify.sh"),
                 description: "Classify input".to_string(),
                 params: vec!["text".to_string()],
             },

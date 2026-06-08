@@ -50,9 +50,9 @@ sp define specialist name \
   --reasoning off|low|medium|high \   # optional, defaults to off
   --stream                    # optional, stream the response
 
-# define a tool from a Taskfile task — its desc and {{.VARS}} become
-# the tool's description and parameters
-sp define tool name --taskfile PATH --task TASK
+# define a tool from an executable script — its `# desc:` and `# params:`
+# header comments become the tool's description and parameters
+sp define tool name --script PATH
 
 # delete
 sp delete specialist name
@@ -78,21 +78,39 @@ spawningpool deliberately does **not** embed a catalog of hosted models or their
 limits — those facts go stale and being their arbiter is a liability. Models you
 call are defined in your own registry via `sp define model`.
 
-### Tools and constraints
+### Tools
+
+A tool is a single executable script. `sp define tool name --script PATH` reads
+two header comments to build the tool the model sees:
+
+```sh
+#!/bin/sh
+# desc: Greet a person by name
+# params: NAME, GREETING
+echo "$GREETING, $NAME!"
+```
+
+`# desc:` becomes the description; `# params:` (whitespace/comma separated)
+becomes the parameters. When the tool is called, each argument is passed to the
+script as an **environment variable** of the same name — values are never
+interpolated into a command line, so there's no shell-injection surface. The
+script must be executable and carry a shebang. A non-zero exit is reported as a
+failed tool call.
+
+### Constraints and the agent loop
 
 A specialist gets tools one of two ways, and the two are mutually exclusive:
 
 - `--tools <a,b,…>` runs the specialist **agentically**: the model decides which
-  tools to call, each call's backing Taskfile task is executed and its output is
-  fed back, and the loop continues until the model stops calling tools (or hits a
+  tools to call, each call's backing script is executed and its output is fed
+  back, and the loop continues until the model stops calling tools (or hits a
   turn cap).
 - `--constraint <tool>` forces the model to call that one tool — the core feature
   for a specialist whose sole job is to figure something out and call a tool with
-  the result. The forced call runs once, its task executes, and the run ends.
+  the result. The forced call runs once, its script executes, and the run ends.
 
-Either way the backing task is run via the `task` binary, with the model's
-arguments passed as `KEY=value` task variables. A task's non-zero exit is fed
-back to the model as a tool error (agentic) or surfaced (constrained).
+A script's non-zero exit is fed back to the model as a tool error (agentic) or
+surfaced (constrained).
 
 There is also an opt-in validator that checks a model's tool-call arguments
 against the tool's JSON Schema and feeds violations back to the model to retry.
@@ -100,13 +118,12 @@ against the tool's JSON Schema and feeds violations back to the model to retry.
 ## Technology choices
 
 1. **Rust:** Catches the most bugs at compile time.
-2. **Taskfiles:** tools are defined from Taskfile tasks, so we don't reinvent the wheel for tool definitions. Deterministic parsing of a task's `{{.VARS}}` gives us a tool's parameters for free.
+2. **Plain scripts as tools:** a tool is just an executable script with a small `# desc:`/`# params:` header. No external task runner, no YAML, no extra dependency — and the script stays runnable and testable on its own. Inputs arrive as environment variables, keeping execution injection-free.
 3. **Clap:** CLI parsing. Necessary for the first version, complete integration testing, and model calling.
 4. **Tauri:** Visual app — **not yet implemented.** Planned past version one, once it's ready to be used by humans.
 
 ## Inspirations
 
-- **task-keeper:** already parses Taskfiles; inspired our own Taskfile parsing (hand-rolled here on `serde_yaml` + `regex`).
 - **pi SDK:** an excellent SDK we drew from, but not used as a dependency — it does not support constrained decoding, which is a core feature here.
 
 ## Phases

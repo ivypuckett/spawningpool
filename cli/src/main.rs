@@ -103,14 +103,12 @@ enum DefineEntity {
         #[arg(long)]
         stream: bool,
     },
-    /// Define a tool from a Taskfile task; its desc and `{{.VARS}}` become the
-    /// description and parameters.
+    /// Define a tool from an executable script; its `# desc:` and `# params:`
+    /// header comments become the description and parameters.
     Tool {
         name: String,
         #[arg(long)]
-        taskfile: PathBuf,
-        #[arg(long)]
-        task: String,
+        script: PathBuf,
     },
 }
 
@@ -261,9 +259,9 @@ async fn one_turn(
     }
 }
 
-/// Execute one tool call by running its backing Taskfile task, print the
-/// outcome, and return the [`ContentBlock::ToolResult`] to feed back to the
-/// model. A failed or unknown task becomes a tool error so the model can react.
+/// Execute one tool call by running its backing script, print the outcome, and
+/// return the [`ContentBlock::ToolResult`] to feed back to the model. A failed
+/// or unknown tool becomes a tool error so the model can react.
 fn run_tool_call(
     registry: &Registry,
     id: &str,
@@ -280,7 +278,7 @@ fn run_tool_call(
     };
 
     let vars = args_to_vars(arguments);
-    match spawningpool::run_task(&tool.taskfile, &tool.task, &vars) {
+    match spawningpool::run_script(&tool.script, &vars) {
         Ok(run) => {
             println!("[tool {tool_name}]\n{}", run.output);
             if run.success {
@@ -388,21 +386,13 @@ fn define(entity: DefineEntity) -> Result<(), String> {
             registry.specialists.insert(name.clone(), def);
             format!("specialist {name}")
         }
-        DefineEntity::Tool {
-            name,
-            taskfile,
-            task,
-        } => {
-            let summary = spawningpool::summarize(&taskfile).map_err(|e| e.to_string())?;
-            let entry = summary
-                .get(&task)
-                .ok_or_else(|| format!("task '{task}' not found in {}", taskfile.display()))?;
+        DefineEntity::Tool { name, script } => {
+            let summary = spawningpool::summarize(&script).map_err(|e| e.to_string())?;
             let def = ToolDef {
                 name: name.clone(),
-                taskfile: taskfile.clone(),
-                task,
-                description: entry.desc.clone().unwrap_or_default(),
-                params: entry.vars.clone(),
+                script: script.clone(),
+                description: summary.desc.unwrap_or_default(),
+                params: summary.params,
             };
             registry.tools.insert(name.clone(), def);
             format!("tool {name}")
