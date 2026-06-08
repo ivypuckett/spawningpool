@@ -3,7 +3,7 @@
 
 mod store;
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use clap::{Parser, Subcommand};
 use futures::StreamExt;
@@ -227,7 +227,9 @@ async fn run_specialist(name: &str, prompt: &str) -> Result<(), String> {
     }
 
     Err(format!(
-        "specialist did not finish within {MAX_TURNS} turns"
+        "specialist '{name}' did not finish within {MAX_TURNS} turns.\n  \
+         It kept calling tools without settling on an answer — inspect the tool \
+         outputs above, tighten its system prompt, or reduce the tools it can call."
     ))
 }
 
@@ -307,8 +309,12 @@ fn run_tool_call(
             }
         }
         Err(e) => {
-            let msg = e.to_string();
-            eprintln!("[tool {tool_name}] failed to run: {msg}");
+            let path = tool.script.display();
+            let msg = format!(
+                "tool '{tool_name}' could not run its script {path}: {e}\n  \
+                 Ensure it exists, is executable (chmod +x {path}), and has a shebang (e.g. #!/bin/sh)."
+            );
+            eprintln!("[tool {tool_name}] {msg}");
             ContentBlock::tool_error(id, msg)
         }
     }
@@ -441,6 +447,7 @@ fn define(entity: DefineEntity) -> Result<(), String> {
                 max_tokens,
                 context_window,
             };
+            check_model_refs(&registry, &def)?;
             registry.models.insert(id.clone(), def);
             format!("model {id}")
         }
@@ -465,14 +472,27 @@ fn define(entity: DefineEntity) -> Result<(), String> {
                 stream,
             };
             def.validate()?;
+            check_specialist_refs(&registry, &def)?;
             registry.specialists.insert(name.clone(), def);
             format!("specialist {name}")
         }
         DefineEntity::Tool { name, script } => {
+            // Resolve to an absolute, runnable path now so the tool works
+            // regardless of the directory `sp run` is later invoked from, and
+            // so an un-runnable script fails here with a fix rather than as a
+            // cryptic launch error mid-run.
+            let script = resolve_script(&script)?;
             let summary = spawningpool::summarize(&script).map_err(|e| e.to_string())?;
+            if summary.desc.is_none() {
+                eprintln!(
+                    "warning: tool '{name}' has no '# desc:' header, so the model will see an \
+                     empty description.\n  Add a line like '# desc: <what it does>' to {}.",
+                    script.display()
+                );
+            }
             let def = ToolDef {
                 name: name.clone(),
-                script: script.clone(),
+                script,
                 description: summary.desc.unwrap_or_default(),
                 params: summary.params,
             };
@@ -487,30 +507,104 @@ fn define(entity: DefineEntity) -> Result<(), String> {
 
 fn delete(entity: DeleteEntity) -> Result<(), String> {
     let mut registry = store::load()?;
-    let (removed, what) = match entity {
+    // Collect any entities that still reference what we're about to remove,
+    // before removing it, so we can warn about the references it leaves dangling.
+    let (removed, what, kind, name, referrers) = match entity {
         DeleteEntity::Specialist { name } => (
             registry.specialists.remove(&name).is_some(),
             format!("specialist {name}"),
+            "specialist",
+            name,
+            Vec::new(),
         ),
-        DeleteEntity::Provider { name } => (
-            registry.providers.remove(&name).is_some(),
-            format!("provider {name}"),
-        ),
-        DeleteEntity::Model { name } => (
-            registry.models.remove(&name).is_some(),
-            format!("model {name}"),
-        ),
-        DeleteEntity::Tool { name } => (
-            registry.tools.remove(&name).is_some(),
-            format!("tool {name}"),
-        ),
+        DeleteEntity::Provider { name } => {
+            let referrers = referrers_of_provider(&registry, &name);
+            (
+                registry.providers.remove(&name).is_some(),
+                format!("provider {name}"),
+                "provider",
+                name,
+                referrers,
+            )
+        }
+        DeleteEntity::Model { name } => {
+            let referrers = referrers_of_model(&registry, &name);
+            (
+                registry.models.remove(&name).is_some(),
+                format!("model {name}"),
+                "model",
+                name,
+                referrers,
+            )
+        }
+        DeleteEntity::Tool { name } => {
+            let referrers = referrers_of_tool(&registry, &name);
+            (
+                registry.tools.remove(&name).is_some(),
+                format!("tool {name}"),
+                "tool",
+                name,
+                referrers,
+            )
+        }
     };
     if !removed {
         return Err(format!("no such {what}"));
     }
     store::save(&registry)?;
     println!("deleted {what}");
+    warn_orphans(kind, &name, &referrers);
     Ok(())
+}
+
+/// Specialists matching `pred`, formatted as `specialist 'name'` and sorted, for
+/// orphan warnings.
+fn specialists_matching(registry: &Registry, pred: impl Fn(&Specialist) -> bool) -> Vec<String> {
+    let mut names: Vec<String> = registry
+        .specialists
+        .values()
+        .filter(|s| pred(s))
+        .map(|s| format!("specialist '{}'", s.name))
+        .collect();
+    names.sort();
+    names
+}
+
+/// Entities that reference a provider: specialists pointing at it, plus models
+/// defined under it.
+fn referrers_of_provider(registry: &Registry, name: &str) -> Vec<String> {
+    let mut referrers = specialists_matching(registry, |s| s.provider == name);
+    let mut models: Vec<String> = registry
+        .models
+        .values()
+        .filter(|m| m.provider == name)
+        .map(|m| format!("model '{}'", m.id))
+        .collect();
+    models.sort();
+    referrers.extend(models);
+    referrers
+}
+
+fn referrers_of_model(registry: &Registry, name: &str) -> Vec<String> {
+    specialists_matching(registry, |s| s.model == name)
+}
+
+fn referrers_of_tool(registry: &Registry, name: &str) -> Vec<String> {
+    specialists_matching(registry, |s| s.tool_names().iter().any(|t| t == name))
+}
+
+/// Warn that a just-deleted entity left dangling references, naming each
+/// referrer and how they'll fail.
+fn warn_orphans(kind: &str, name: &str, referrers: &[String]) {
+    if referrers.is_empty() {
+        return;
+    }
+    for referrer in referrers {
+        eprintln!("warning: {kind} '{name}' is still referenced by {referrer}");
+    }
+    eprintln!(
+        "  Those references will fail at run time until you redefine {kind} '{name}' or repoint them."
+    );
 }
 
 /// Split a comma-separated list flag into trimmed, non-empty names.
@@ -534,6 +628,132 @@ fn parse_reasoning(raw: &str) -> Result<Reasoning, String> {
         "high" => Ok(Reasoning::High),
         other => Err(format!("unknown reasoning '{other}' (off|low|medium|high)")),
     }
+}
+
+/// Sorted, comma-joined keys of a registry section, for the "Defined X: ..."
+/// line in a referential error. Names the empty case explicitly so the message
+/// reads sensibly before anything is defined.
+fn available_names<V>(map: &HashMap<String, V>) -> String {
+    if map.is_empty() {
+        return "(none defined yet)".to_string();
+    }
+    let mut names: Vec<&str> = map.keys().map(String::as_str).collect();
+    names.sort();
+    names.join(", ")
+}
+
+/// Reject a model that names a provider the registry doesn't hold, naming the
+/// provider, what's available, and how to define it.
+fn check_model_refs(registry: &Registry, model: &ModelDef) -> Result<(), String> {
+    if !registry.providers.contains_key(&model.provider) {
+        return Err([
+            format!(
+                "model '{}' references provider '{}', which isn't defined.",
+                model.id, model.provider
+            ),
+            String::new(),
+            format!("  Defined providers: {}", available_names(&registry.providers)),
+            String::new(),
+            "  Define it first:".to_string(),
+            format!(
+                "      sp define provider {} --api <anthropic-messages|openai-completions> --base-url <url>",
+                model.provider
+            ),
+        ]
+        .join("\n"));
+    }
+    Ok(())
+}
+
+/// Reject a specialist that references a provider, model, or tool the registry
+/// doesn't hold. Each error names the missing entity, lists what's defined, and
+/// shows the command that would create it.
+fn check_specialist_refs(registry: &Registry, specialist: &Specialist) -> Result<(), String> {
+    if !registry.providers.contains_key(&specialist.provider) {
+        return Err([
+            format!(
+                "specialist '{}' references provider '{}', which isn't defined.",
+                specialist.name, specialist.provider
+            ),
+            String::new(),
+            format!("  Defined providers: {}", available_names(&registry.providers)),
+            String::new(),
+            "  Define it first:".to_string(),
+            format!(
+                "      sp define provider {} --api <anthropic-messages|openai-completions> --base-url <url>",
+                specialist.provider
+            ),
+            String::new(),
+            "  ...or point the specialist at one that exists with --provider.".to_string(),
+        ]
+        .join("\n"));
+    }
+    if !registry.models.contains_key(&specialist.model) {
+        return Err([
+            format!(
+                "specialist '{}' references model '{}', which isn't defined.",
+                specialist.name, specialist.model
+            ),
+            String::new(),
+            format!("  Defined models: {}", available_names(&registry.models)),
+            String::new(),
+            "  Define it first:".to_string(),
+            format!(
+                "      sp define model {} --provider {} --max-tokens <n> --context-window <n>",
+                specialist.model, specialist.provider
+            ),
+            String::new(),
+            "  ...or point the specialist at one that exists with --model.".to_string(),
+        ]
+        .join("\n"));
+    }
+    for tool in specialist.tool_names() {
+        if !registry.tools.contains_key(tool) {
+            return Err([
+                format!(
+                    "specialist '{}' references tool '{}', which isn't defined.",
+                    specialist.name, tool
+                ),
+                String::new(),
+                format!("  Defined tools: {}", available_names(&registry.tools)),
+                String::new(),
+                "  Back it with a script:".to_string(),
+                format!("      sp define tool {tool} --script <path>"),
+            ]
+            .join("\n"));
+        }
+    }
+    Ok(())
+}
+
+/// Resolve a tool script to an absolute path and confirm it can actually run:
+/// it must exist and have the executable bit set. Storing it absolute means the
+/// tool resolves no matter where `sp run` is invoked from.
+fn resolve_script(script: &Path) -> Result<PathBuf, String> {
+    use std::os::unix::fs::PermissionsExt;
+
+    let path = std::fs::canonicalize(script).map_err(|e| {
+        format!(
+            "tool script {} can't be read: {e}\n  Check the path is right and the file exists.",
+            script.display()
+        )
+    })?;
+    let mode = std::fs::metadata(&path)
+        .map_err(|e| format!("tool script {} can't be read: {e}", path.display()))?
+        .permissions()
+        .mode();
+    if mode & 0o111 == 0 {
+        return Err([
+            format!("tool script {} isn't executable.", path.display()),
+            String::new(),
+            "  Make it runnable:".to_string(),
+            format!("      chmod +x {}", path.display()),
+            String::new(),
+            "  (It also needs a shebang line, e.g. #!/bin/sh.)".to_string(),
+        ]
+        .join("\n"));
+    }
+    Ok(path)
 }
 
 #[cfg(test)]
@@ -754,5 +974,218 @@ mod tests {
 
         std::fs::remove_dir_all(&dir).ok();
         restore_registry_env(saved);
+    }
+
+    fn populated_registry() -> Registry {
+        let mut registry = Registry::default();
+        registry.providers.insert(
+            "anthropic".into(),
+            ProviderDef {
+                name: "anthropic".into(),
+                api: spawningpool::ai::Api::AnthropicMessages,
+                base_url: "https://api.anthropic.com".into(),
+                api_key_env: Some("ANTHROPIC_API_KEY".into()),
+            },
+        );
+        registry.models.insert(
+            "claude".into(),
+            ModelDef {
+                id: "claude".into(),
+                name: "Claude".into(),
+                provider: "anthropic".into(),
+                max_tokens: 1024,
+                context_window: 200_000,
+            },
+        );
+        registry.tools.insert(
+            "ping".into(),
+            ToolDef {
+                name: "ping".into(),
+                script: PathBuf::from("ping.sh"),
+                description: "Ping".into(),
+                params: vec![],
+            },
+        );
+        registry
+    }
+
+    fn specialist_ref(
+        provider: &str,
+        model: &str,
+        tools: Vec<String>,
+        constraint: Option<String>,
+    ) -> Specialist {
+        Specialist {
+            name: "spec".into(),
+            provider: provider.into(),
+            model: model.into(),
+            system_prompt: "s".into(),
+            tools,
+            constraint,
+            reasoning: Reasoning::Off,
+            stream: false,
+        }
+    }
+
+    #[test]
+    fn available_names_lists_sorted_or_notes_emptiness() {
+        let mut map: HashMap<String, u8> = HashMap::new();
+        assert_eq!(available_names(&map), "(none defined yet)");
+        map.insert("b".into(), 0);
+        map.insert("a".into(), 0);
+        assert_eq!(available_names(&map), "a, b");
+    }
+
+    #[test]
+    fn check_specialist_refs_passes_when_all_present() {
+        let registry = populated_registry();
+        let spec = specialist_ref("anthropic", "claude", vec!["ping".into()], None);
+        assert!(check_specialist_refs(&registry, &spec).is_ok());
+    }
+
+    #[test]
+    fn check_specialist_refs_reports_missing_provider_model_and_tool() {
+        let registry = populated_registry();
+
+        let err =
+            check_specialist_refs(&registry, &specialist_ref("ghost", "claude", vec![], None))
+                .unwrap_err();
+        assert!(err.contains("references provider 'ghost'"));
+        assert!(err.contains("sp define provider ghost"));
+
+        let err = check_specialist_refs(
+            &registry,
+            &specialist_ref("anthropic", "nope", vec![], None),
+        )
+        .unwrap_err();
+        assert!(err.contains("references model 'nope'"));
+        assert!(err.contains("sp define model nope"));
+
+        let err = check_specialist_refs(
+            &registry,
+            &specialist_ref("anthropic", "claude", vec!["absent".into()], None),
+        )
+        .unwrap_err();
+        assert!(err.contains("references tool 'absent'"));
+        assert!(err.contains("sp define tool absent"));
+    }
+
+    #[test]
+    fn check_specialist_refs_validates_the_constrained_tool() {
+        let registry = populated_registry();
+        // A constraint names a tool too, so an undefined forced tool is caught.
+        let spec = specialist_ref("anthropic", "claude", vec![], Some("absent".into()));
+        let err = check_specialist_refs(&registry, &spec).unwrap_err();
+        assert!(err.contains("references tool 'absent'"));
+    }
+
+    #[test]
+    fn check_model_refs_requires_a_defined_provider() {
+        let registry = populated_registry();
+        let ok = ModelDef {
+            id: "m".into(),
+            name: "m".into(),
+            provider: "anthropic".into(),
+            max_tokens: 1,
+            context_window: 1,
+        };
+        assert!(check_model_refs(&registry, &ok).is_ok());
+
+        let bad = ModelDef {
+            provider: "ghost".into(),
+            ..ok
+        };
+        let err = check_model_refs(&registry, &bad).unwrap_err();
+        assert!(err.contains("references provider 'ghost'"));
+        assert!(err.contains("sp define provider ghost"));
+    }
+
+    #[test]
+    fn referrers_find_entities_pointing_at_a_target() {
+        let mut registry = populated_registry();
+        registry.specialists.insert(
+            "spec".into(),
+            specialist_ref("anthropic", "claude", vec!["ping".into()], None),
+        );
+
+        // A provider is referenced by both the specialist and the model under it.
+        assert_eq!(
+            referrers_of_provider(&registry, "anthropic"),
+            vec![
+                "specialist 'spec'".to_string(),
+                "model 'claude'".to_string()
+            ]
+        );
+        assert_eq!(
+            referrers_of_model(&registry, "claude"),
+            vec!["specialist 'spec'".to_string()]
+        );
+        assert_eq!(
+            referrers_of_tool(&registry, "ping"),
+            vec!["specialist 'spec'".to_string()]
+        );
+
+        // An unreferenced name has no referrers.
+        assert!(referrers_of_provider(&registry, "openai").is_empty());
+    }
+
+    #[test]
+    fn referrers_of_tool_includes_a_constrained_tool() {
+        let mut registry = populated_registry();
+        registry.specialists.insert(
+            "spec".into(),
+            specialist_ref("anthropic", "claude", vec![], Some("ping".into())),
+        );
+        assert_eq!(
+            referrers_of_tool(&registry, "ping"),
+            vec!["specialist 'spec'".to_string()]
+        );
+    }
+
+    #[test]
+    fn resolve_script_returns_absolute_path_for_executable() {
+        let script = write_script("#!/bin/sh\necho hi\n");
+        let resolved = resolve_script(&script).unwrap();
+        std::fs::remove_file(&script).ok();
+        assert!(resolved.is_absolute());
+    }
+
+    #[test]
+    fn resolve_script_rejects_non_executable_with_chmod_hint() {
+        use std::os::unix::fs::PermissionsExt;
+        let path = std::env::temp_dir().join(format!(
+            "sp_noexec_{}_{}.sh",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::write(&path, "#!/bin/sh\necho hi\n").unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+        let err = resolve_script(&path).unwrap_err();
+        std::fs::remove_file(&path).ok();
+        assert!(err.contains("isn't executable"));
+        assert!(err.contains("chmod +x"));
+    }
+
+    #[test]
+    fn run_tool_call_enriches_launch_failure_with_remediation() {
+        // A tool whose script can't be launched surfaces a fix, not a raw OS error.
+        let registry = registry_with_tool(
+            "ghost_script",
+            PathBuf::from("/nonexistent/sp_tool_does_not_exist.sh"),
+        );
+        let block = run_tool_call(&registry, "id", "ghost_script", &serde_json::json!({}));
+        match block {
+            ContentBlock::ToolResult {
+                content, is_error, ..
+            } => {
+                assert!(is_error);
+                assert!(content.contains("could not run its script"));
+                assert!(content.contains("chmod +x"));
+            }
+            other => panic!("expected ToolResult error, got {other:?}"),
+        }
     }
 }
