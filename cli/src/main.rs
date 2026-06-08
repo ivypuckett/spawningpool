@@ -11,7 +11,9 @@ use spawningpool::ai::{
     Api, Client, CompleteOptions, ContentBlock, Context, Message, Model, Reasoning, Role,
     StreamEvent, Usage,
 };
-use spawningpool::{ModelDef, ProviderDef, Registry, Specialist, ToolDef};
+use spawningpool::{
+    EntityKind, ModelDef, ProviderDef, Referrer, Registry, ScriptError, Specialist, ToolDef,
+};
 use std::collections::HashMap;
 use std::io::Write;
 
@@ -732,40 +734,24 @@ fn delete(entity: DeleteEntity) -> Result<(), String> {
     Ok(())
 }
 
-/// Specialists matching `pred`, formatted as `specialist 'name'` and sorted, for
-/// orphan warnings.
-fn specialists_matching(registry: &Registry, pred: impl Fn(&Specialist) -> bool) -> Vec<String> {
-    let mut names: Vec<String> = registry
-        .specialists
-        .values()
-        .filter(|s| pred(s))
-        .map(|s| format!("specialist '{}'", s.name))
-        .collect();
-    names.sort();
-    names
+/// Render the registry's [`Referrer`]s as `kind 'name'` lines for orphan warnings.
+fn format_referrers(referrers: Vec<Referrer>) -> Vec<String> {
+    referrers
+        .into_iter()
+        .map(|r| format!("{} '{}'", r.kind, r.name))
+        .collect()
 }
 
-/// Entities that reference a provider: specialists pointing at it, plus models
-/// defined under it.
 fn referrers_of_provider(registry: &Registry, name: &str) -> Vec<String> {
-    let mut referrers = specialists_matching(registry, |s| s.provider == name);
-    let mut models: Vec<String> = registry
-        .models
-        .values()
-        .filter(|m| m.provider == name)
-        .map(|m| format!("model '{}'", m.id))
-        .collect();
-    models.sort();
-    referrers.extend(models);
-    referrers
+    format_referrers(registry.referrers(EntityKind::Provider, name))
 }
 
 fn referrers_of_model(registry: &Registry, name: &str) -> Vec<String> {
-    specialists_matching(registry, |s| s.model == name)
+    format_referrers(registry.referrers(EntityKind::Model, name))
 }
 
 fn referrers_of_tool(registry: &Registry, name: &str) -> Vec<String> {
-    specialists_matching(registry, |s| s.tool_names().iter().any(|t| t == name))
+    format_referrers(registry.referrers(EntityKind::Tool, name))
 }
 
 /// Warn that a just-deleted entity left dangling references, naming each
@@ -796,13 +782,7 @@ fn parse_list(raw: Option<String>) -> Vec<String> {
 }
 
 fn parse_reasoning(raw: &str) -> Result<Reasoning, String> {
-    match raw {
-        "off" => Ok(Reasoning::Off),
-        "low" => Ok(Reasoning::Low),
-        "medium" => Ok(Reasoning::Medium),
-        "high" => Ok(Reasoning::High),
-        other => Err(format!("unknown reasoning '{other}' (off|low|medium|high)")),
-    }
+    raw.parse()
 }
 
 /// Sorted, comma-joined keys of a registry section, for the "Defined X: ..."
@@ -820,7 +800,7 @@ fn available_names<V>(map: &HashMap<String, V>) -> String {
 /// Reject a model that names a provider the registry doesn't hold, naming the
 /// provider, what's available, and how to define it.
 fn check_model_refs(registry: &Registry, model: &ModelDef) -> Result<(), String> {
-    if !registry.providers.contains_key(&model.provider) {
+    if registry.missing_model_ref(model).is_some() {
         return Err([
             format!(
                 "model '{}' references provider '{}', which isn't defined.",
@@ -844,11 +824,14 @@ fn check_model_refs(registry: &Registry, model: &ModelDef) -> Result<(), String>
 /// doesn't hold. Each error names the missing entity, lists what's defined, and
 /// shows the command that would create it.
 fn check_specialist_refs(registry: &Registry, specialist: &Specialist) -> Result<(), String> {
-    if !registry.providers.contains_key(&specialist.provider) {
-        return Err([
+    let Some(missing) = registry.missing_specialist_ref(specialist) else {
+        return Ok(());
+    };
+    let message = match missing.kind {
+        EntityKind::Provider => [
             format!(
                 "specialist '{}' references provider '{}', which isn't defined.",
-                specialist.name, specialist.provider
+                specialist.name, missing.name
             ),
             String::new(),
             format!("  Defined providers: {}", available_names(&registry.providers)),
@@ -856,18 +839,16 @@ fn check_specialist_refs(registry: &Registry, specialist: &Specialist) -> Result
             "  Define it first:".to_string(),
             format!(
                 "      sp define provider {} --api <anthropic-messages|openai-completions> --base-url <url>",
-                specialist.provider
+                missing.name
             ),
             String::new(),
             "  ...or point the specialist at one that exists with --provider.".to_string(),
         ]
-        .join("\n"));
-    }
-    if !registry.models.contains_key(&specialist.model) {
-        return Err([
+        .join("\n"),
+        EntityKind::Model => [
             format!(
                 "specialist '{}' references model '{}', which isn't defined.",
-                specialist.name, specialist.model
+                specialist.name, missing.name
             ),
             String::new(),
             format!("  Defined models: {}", available_names(&registry.models)),
@@ -875,50 +856,41 @@ fn check_specialist_refs(registry: &Registry, specialist: &Specialist) -> Result
             "  Define it first:".to_string(),
             format!(
                 "      sp define model {} --provider {} --max-tokens <n> --context-window <n>",
-                specialist.model, specialist.provider
+                missing.name, specialist.provider
             ),
             String::new(),
             "  ...or point the specialist at one that exists with --model.".to_string(),
         ]
-        .join("\n"));
-    }
-    for tool in specialist.tool_names() {
-        if !registry.tools.contains_key(tool) {
-            return Err([
-                format!(
-                    "specialist '{}' references tool '{}', which isn't defined.",
-                    specialist.name, tool
-                ),
-                String::new(),
-                format!("  Defined tools: {}", available_names(&registry.tools)),
-                String::new(),
-                "  Back it with a script:".to_string(),
-                format!("      sp define tool {tool} --script <path>"),
-            ]
-            .join("\n"));
+        .join("\n"),
+        EntityKind::Tool => [
+            format!(
+                "specialist '{}' references tool '{}', which isn't defined.",
+                specialist.name, missing.name
+            ),
+            String::new(),
+            format!("  Defined tools: {}", available_names(&registry.tools)),
+            String::new(),
+            "  Back it with a script:".to_string(),
+            format!("      sp define tool {} --script <path>", missing.name),
+        ]
+        .join("\n"),
+        EntityKind::Specialist => {
+            unreachable!("a specialist does not reference other specialists")
         }
-    }
-    Ok(())
+    };
+    Err(message)
 }
 
 /// Resolve a tool script to an absolute path and confirm it can actually run:
 /// it must exist and have the executable bit set. Storing it absolute means the
 /// tool resolves no matter where `sp run` is invoked from.
 fn resolve_script(script: &Path) -> Result<PathBuf, String> {
-    use std::os::unix::fs::PermissionsExt;
-
-    let path = std::fs::canonicalize(script).map_err(|e| {
-        format!(
-            "tool script {} can't be read: {e}\n  Check the path is right and the file exists.",
-            script.display()
-        )
-    })?;
-    let mode = std::fs::metadata(&path)
-        .map_err(|e| format!("tool script {} can't be read: {e}", path.display()))?
-        .permissions()
-        .mode();
-    if mode & 0o111 == 0 {
-        return Err([
+    spawningpool::prepare_script(script).map_err(|e| match e {
+        ScriptError::Unreadable { path, source } => format!(
+            "tool script {} can't be read: {source}\n  Check the path is right and the file exists.",
+            path.display()
+        ),
+        ScriptError::NotExecutable { path } => [
             format!("tool script {} isn't executable.", path.display()),
             String::new(),
             "  Make it runnable:".to_string(),
@@ -926,9 +898,8 @@ fn resolve_script(script: &Path) -> Result<PathBuf, String> {
             String::new(),
             "  (It also needs a shebang line, e.g. #!/bin/sh.)".to_string(),
         ]
-        .join("\n"));
-    }
-    Ok(path)
+        .join("\n"),
+    })
 }
 
 #[cfg(test)]

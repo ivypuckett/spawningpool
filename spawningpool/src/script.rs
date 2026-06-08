@@ -7,7 +7,7 @@
 //! runner calls [`run_script`] to execute it.
 
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 /// A tool script's declared description and parameters, parsed from its header
@@ -60,6 +60,67 @@ fn parse_header(contents: &str) -> ScriptSummary {
         desc,
         params: params.unwrap_or_default(),
     }
+}
+
+/// Why a tool script can't be accepted as a tool's backing executable.
+#[derive(Debug)]
+pub enum ScriptError {
+    /// The script path couldn't be canonicalized or read — most often it
+    /// doesn't exist. Carries the path as given and the underlying I/O error.
+    Unreadable {
+        path: PathBuf,
+        source: std::io::Error,
+    },
+    /// The script exists but isn't executable (no `+x` bit). Carries the
+    /// canonical path, so a caller can show the exact `chmod` target.
+    NotExecutable { path: PathBuf },
+}
+
+impl std::fmt::Display for ScriptError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ScriptError::Unreadable { path, source } => {
+                write!(f, "tool script {} can't be read: {source}", path.display())
+            }
+            ScriptError::NotExecutable { path } => {
+                write!(f, "tool script {} isn't executable", path.display())
+            }
+        }
+    }
+}
+
+impl std::error::Error for ScriptError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            ScriptError::Unreadable { source, .. } => Some(source),
+            ScriptError::NotExecutable { .. } => None,
+        }
+    }
+}
+
+/// Resolve a tool script to an absolute path and confirm it can actually run: it
+/// must exist and have the executable bit set. Storing the script absolute means
+/// the tool resolves no matter where it is later invoked from. This is the check
+/// `sp define tool` (or a UI) runs before accepting a script, so an un-runnable
+/// one fails at define time with a fixable error rather than mid-run.
+pub fn prepare_script(script: &Path) -> Result<PathBuf, ScriptError> {
+    use std::os::unix::fs::PermissionsExt;
+
+    let path = std::fs::canonicalize(script).map_err(|source| ScriptError::Unreadable {
+        path: script.to_path_buf(),
+        source,
+    })?;
+    let mode = std::fs::metadata(&path)
+        .map_err(|source| ScriptError::Unreadable {
+            path: path.clone(),
+            source,
+        })?
+        .permissions()
+        .mode();
+    if mode & 0o111 == 0 {
+        return Err(ScriptError::NotExecutable { path });
+    }
+    Ok(path)
 }
 
 /// Run a tool script directly, passing each argument as an environment variable.
@@ -130,6 +191,37 @@ mod tests {
         std::fs::write(&path, body).unwrap();
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
         path
+    }
+
+    #[test]
+    fn prepare_script_returns_absolute_path_for_executable() {
+        let path = write_script("#!/bin/sh\necho hi\n");
+        let resolved = prepare_script(&path).unwrap();
+        std::fs::remove_file(&path).ok();
+        assert!(resolved.is_absolute());
+    }
+
+    #[test]
+    fn prepare_script_rejects_non_executable() {
+        let path = std::env::temp_dir().join(format!(
+            "sp_noexec_{}_{}.sh",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::write(&path, "#!/bin/sh\necho hi\n").unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+        let err = prepare_script(&path).unwrap_err();
+        std::fs::remove_file(&path).ok();
+        assert!(matches!(err, ScriptError::NotExecutable { .. }));
+    }
+
+    #[test]
+    fn prepare_script_reports_a_missing_script_as_unreadable() {
+        let err = prepare_script(Path::new("/nonexistent/sp_missing_xyz.sh")).unwrap_err();
+        assert!(matches!(err, ScriptError::Unreadable { .. }));
     }
 
     #[test]
