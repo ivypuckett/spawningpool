@@ -83,6 +83,11 @@ enum DefineEntity {
         base_url: String,
         #[arg(long)]
         api_key_env: Option<String>,
+        /// Declare that this provider's endpoint supports constrained decoding,
+        /// so constrained specialists force their tool call via grammar-constrained
+        /// `response_format` instead of `tool_choice`. OpenAI-compatible only.
+        #[arg(long)]
+        constrained_decoding: bool,
     },
     /// Define a model, keyed by its API id, against a provider.
     Model {
@@ -336,15 +341,15 @@ async fn run_specialist(name: &str, prompt: &str) -> Result<(), String> {
         .ok_or_else(|| format!("unknown specialist: {name}"))?;
 
     let mut opts = specialist.complete_options();
-    // Source the API key from the provider's configured env var, if any.
-    if let Some(env) = registry
-        .providers
-        .get(&specialist.provider)
-        .and_then(|p| p.api_key_env.as_ref())
-    {
-        if let Ok(key) = std::env::var(env) {
-            opts.api_key = Some(key);
+    if let Some(provider) = registry.providers.get(&specialist.provider) {
+        // Source the API key from the provider's configured env var, if any.
+        if let Some(env) = provider.api_key_env.as_ref() {
+            if let Ok(key) = std::env::var(env) {
+                opts.api_key = Some(key);
+            }
         }
+        // Honor the provider's declared constrained-decoding capability.
+        opts.constrained_decoding = provider.constrained_decoding;
     }
 
     let client = Client::new();
@@ -458,12 +463,14 @@ fn define(entity: DefineEntity) -> Result<(), String> {
             api,
             base_url,
             api_key_env,
+            constrained_decoding,
         } => {
             let def = ProviderDef {
                 name: name.clone(),
                 api: api.parse::<Api>()?,
                 base_url,
                 api_key_env,
+                constrained_decoding,
             };
             registry.providers.insert(name.clone(), def);
             format!("provider {name}")
@@ -820,6 +827,7 @@ mod tests {
             api: "anthropic-messages".into(),
             base_url: "https://api.anthropic.com".into(),
             api_key_env: Some("ANTHROPIC_API_KEY".into()),
+            constrained_decoding: false,
         })
         .unwrap();
 
@@ -901,6 +909,7 @@ mod tests {
                 api: spawningpool::ai::Api::AnthropicMessages,
                 base_url: "https://api.anthropic.com".into(),
                 api_key_env: Some("ANTHROPIC_API_KEY".into()),
+                constrained_decoding: false,
             },
         );
         registry.models.insert(
@@ -1076,6 +1085,7 @@ mod tests {
                 api: Api::AnthropicMessages,
                 base_url: "https://api.anthropic.com".into(),
                 api_key_env: Some("ANTHROPIC_API_KEY".into()),
+                constrained_decoding: false,
             },
         );
         let msg = onboarding_message(&reg);
@@ -1119,6 +1129,7 @@ mod tests {
                 api: Api::OpenAiCompletions,
                 base_url: "http://localhost:1234/v1".into(),
                 api_key_env: None,
+                constrained_decoding: false,
             },
         );
         let msg = onboarding_message(&reg);

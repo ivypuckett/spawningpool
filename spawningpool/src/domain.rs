@@ -69,6 +69,13 @@ pub struct ProviderDef {
     /// Env var holding the API key, if the provider needs one.
     #[serde(default)]
     pub api_key_env: Option<String>,
+    /// Whether this provider's endpoint supports true constrained decoding
+    /// (grammar-constrained `response_format`). User-declared, since it can't be
+    /// inferred from the wire protocol — two `openai-completions` endpoints can
+    /// differ. When set, a constrained specialist on this provider realizes its
+    /// forced call via constrained decoding; otherwise via `tool_choice`.
+    #[serde(default)]
+    pub constrained_decoding: bool,
 }
 
 /// A defined model (`sp define model`). Per option A it names its provider and
@@ -358,6 +365,7 @@ mod tests {
             api: Api::AnthropicMessages,
             base_url: "https://api.anthropic.com".to_string(),
             api_key_env: Some("ANTHROPIC_API_KEY".to_string()),
+            constrained_decoding: false,
         }
     }
 

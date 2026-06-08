@@ -39,9 +39,16 @@ impl Provider for OpenAi {
         }
         let parsed: WireResponse = serde_json::from_str(&text).map_err(|_| {
             let preview = text.chars().take(200).collect::<String>();
-            Error::Parse(format!("server response was not in the expected format; got: {preview}"))
+            Error::Parse(format!(
+                "server response was not in the expected format; got: {preview}"
+            ))
         })?;
-        parsed.into_completion()
+        let mut completion = parsed.into_completion()?;
+        if let Some((name, _)) = constrained_schema(ctx, opts) {
+            completion.message.content =
+                synthesize_constrained_call(&completion.message.content, name);
+        }
+        Ok(completion)
     }
 
     async fn stream(
@@ -96,7 +103,9 @@ struct WireRequest {
     #[serde(skip_serializing_if = "Vec::is_empty")]
     tools: Vec<WireTool>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    tool_choice: Option<WireToolChoice>,
+    tool_choice: Option<&'static str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    response_format: Option<serde_json::Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     reasoning_effort: Option<&'static str>,
     #[serde(skip_serializing_if = "std::ops::Not::not")]
@@ -142,18 +151,6 @@ struct WireToolFunction {
     parameters: serde_json::Value,
 }
 
-#[derive(Serialize)]
-struct WireToolChoice {
-    #[serde(rename = "type")]
-    kind: &'static str,
-    function: WireToolChoiceFunction,
-}
-
-#[derive(Serialize)]
-struct WireToolChoiceFunction {
-    name: String,
-}
-
 fn build_request(
     model: &Model,
     ctx: &Context,
@@ -172,26 +169,36 @@ fn build_request(
     for message in &ctx.messages {
         append_message(&mut messages, message);
     }
+    let all_tools: Vec<WireTool> = ctx
+        .tools
+        .iter()
+        .map(|t| WireTool {
+            kind: "function",
+            function: WireToolFunction {
+                name: t.name.clone(),
+                description: t.description.clone(),
+                parameters: t.parameters.clone(),
+            },
+        })
+        .collect();
+    // A forced tool call is realized one of two ways. With constrained decoding
+    // the model is grammar-constrained to the tool's argument schema via
+    // `response_format` (no tools sent — the harness synthesizes the call from
+    // the JSON). Otherwise we force it with `tool_choice: "required"`, which —
+    // because a constrained specialist sends only that one tool — forces exactly
+    // it, and is far more portable than the per-function object form.
+    let (tools, tool_choice, response_format) = match constrained_schema(ctx, opts) {
+        Some((name, schema)) => (Vec::new(), None, Some(json_schema_format(name, schema))),
+        None if opts.tool_choice.is_some() => (all_tools, Some("required"), None),
+        None => (all_tools, None, None),
+    };
     let request = WireRequest {
         model: model.id.clone(),
         messages,
         max_tokens: opts.max_tokens.unwrap_or(model.max_tokens),
-        tools: ctx
-            .tools
-            .iter()
-            .map(|t| WireTool {
-                kind: "function",
-                function: WireToolFunction {
-                    name: t.name.clone(),
-                    description: t.description.clone(),
-                    parameters: t.parameters.clone(),
-                },
-            })
-            .collect(),
-        tool_choice: opts.tool_choice.as_ref().map(|name| WireToolChoice {
-            kind: "function",
-            function: WireToolChoiceFunction { name: name.clone() },
-        }),
+        tools,
+        tool_choice,
+        response_format,
         reasoning_effort: match opts.reasoning {
             Reasoning::Off => None,
             Reasoning::Low => Some("low"),
@@ -201,6 +208,60 @@ fn build_request(
         stream,
     };
     serde_json::to_value(request).expect("request serializes")
+}
+
+/// When constrained decoding is requested for a forced tool call, return that
+/// tool's name and parameter schema. The tool must be present in the request
+/// (`build_context` resolves it); if it isn't, we return `None` and fall back to
+/// `tool_choice` forcing instead.
+fn constrained_schema<'a>(
+    ctx: &'a Context,
+    opts: &'a CompleteOptions,
+) -> Option<(&'a str, serde_json::Value)> {
+    if !opts.constrained_decoding {
+        return None;
+    }
+    let name = opts.tool_choice.as_deref()?;
+    let schema = ctx
+        .tools
+        .iter()
+        .find(|t| t.name == name)?
+        .parameters
+        .clone();
+    Some((name, schema))
+}
+
+/// A strict `json_schema` response_format built from a tool's parameter schema,
+/// so the model's output is grammar-constrained to valid arguments.
+fn json_schema_format(name: &str, mut schema: serde_json::Value) -> serde_json::Value {
+    // OpenAI strict mode requires `additionalProperties: false` on the object.
+    if let Some(obj) = schema.as_object_mut() {
+        obj.insert(
+            "additionalProperties".into(),
+            serde_json::Value::Bool(false),
+        );
+    }
+    serde_json::json!({
+        "type": "json_schema",
+        "json_schema": { "name": name, "schema": schema, "strict": true },
+    })
+}
+
+/// In constrained-decoding mode the model returns the tool's arguments as JSON
+/// text rather than a `tool_call`, so synthesize the call the run loop expects.
+fn synthesize_constrained_call(content: &[ContentBlock], tool: &str) -> Vec<ContentBlock> {
+    let args = content
+        .iter()
+        .find_map(|b| match b {
+            ContentBlock::Text { text } => Some(text.as_str()),
+            _ => None,
+        })
+        .unwrap_or("");
+    vec![ContentBlock::ToolCall {
+        id: format!("constrained_{tool}"),
+        name: tool.to_string(),
+        arguments: parse_args(args),
+    }]
 }
 
 fn append_message(messages: &mut Vec<WireMessage>, message: &Message) {
@@ -583,14 +644,16 @@ mod tests {
     }
 
     #[test]
-    fn forced_tool_choice_serializes_and_default_omits_it() {
+    fn forced_tool_choice_uses_required_and_default_omits_it() {
+        // A forced tool call serializes as the portable "required" string, not
+        // the per-function object form that some OpenAI-compatible servers reject.
         let opts = CompleteOptions {
             tool_choice: Some("get_weather".into()),
             ..Default::default()
         };
         let body = build_request(&model(), &Context::default(), &opts, false);
-        assert_eq!(body["tool_choice"]["type"], "function");
-        assert_eq!(body["tool_choice"]["function"]["name"], "get_weather");
+        assert_eq!(body["tool_choice"], "required");
+        assert!(body.get("response_format").is_none());
 
         let default = build_request(
             &model(),
@@ -599,6 +662,62 @@ mod tests {
             false,
         );
         assert!(default.get("tool_choice").is_none());
+    }
+
+    #[test]
+    fn constrained_decoding_emits_response_format_and_drops_tools() {
+        // With the provider's constrained-decoding capability declared, a forced
+        // call is realized via response_format json_schema built from the tool's
+        // parameter schema — no tools or tool_choice sent.
+        let ctx = Context {
+            system: None,
+            messages: vec![],
+            tools: vec![crate::ai::model::Tool {
+                name: "classify".into(),
+                description: "Classify".into(),
+                parameters: serde_json::json!({
+                    "type": "object",
+                    "properties": { "label": { "type": "string" } },
+                    "required": ["label"],
+                }),
+            }],
+        };
+        let opts = CompleteOptions {
+            tool_choice: Some("classify".into()),
+            constrained_decoding: true,
+            ..Default::default()
+        };
+        let body = build_request(&model(), &ctx, &opts, false);
+        assert!(body.get("tools").is_none());
+        assert!(body.get("tool_choice").is_none());
+        let format = &body["response_format"];
+        assert_eq!(format["type"], "json_schema");
+        assert_eq!(format["json_schema"]["name"], "classify");
+        assert_eq!(format["json_schema"]["strict"], true);
+        assert_eq!(
+            format["json_schema"]["schema"]["additionalProperties"],
+            false
+        );
+        assert_eq!(
+            format["json_schema"]["schema"]["properties"]["label"]["type"],
+            "string"
+        );
+    }
+
+    #[test]
+    fn synthesize_constrained_call_wraps_json_text_as_a_tool_call() {
+        let content = vec![ContentBlock::Text {
+            text: r#"{"label":"spam"}"#.into(),
+        }];
+        let call = synthesize_constrained_call(&content, "classify");
+        assert_eq!(
+            call,
+            vec![ContentBlock::ToolCall {
+                id: "constrained_classify".into(),
+                name: "classify".into(),
+                arguments: serde_json::json!({ "label": "spam" }),
+            }]
+        );
     }
 
     #[test]

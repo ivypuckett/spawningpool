@@ -57,10 +57,14 @@ pub async fn run_specialist(
     // A constrained specialist makes a single forced call; a tools specialist
     // runs agentically until it stops calling tools.
     let agentic = specialist.constraint.is_none();
+    // Constrained decoding returns the tool's arguments as a single block of
+    // JSON text that the adapter rewrites into a tool call; there's nothing
+    // meaningful to stream, and the stream path can't do that rewrite, so force
+    // a non-streaming turn when it's in play.
+    let stream = specialist.stream && !opts.constrained_decoding;
 
     for _ in 0..MAX_TURNS {
-        let (message, usage) =
-            one_turn(client, &model, &ctx, opts, specialist.stream, observer).await?;
+        let (message, usage) = one_turn(client, &model, &ctx, opts, stream, observer).await?;
         observer(RunEvent::Usage(usage));
 
         let calls: Vec<(String, String, serde_json::Value)> = message

@@ -126,6 +126,7 @@ mod tests {
                 api: crate::ai::Api::AnthropicMessages,
                 base_url: "https://api.anthropic.com".into(),
                 api_key_env: None,
+                constrained_decoding: false,
             },
         );
         save_to(&path, &registry).unwrap();

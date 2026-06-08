@@ -32,7 +32,9 @@ impl Provider for Anthropic {
         let resp = send(http, model, opts, &body).await?;
         let parsed: WireResponse = serde_json::from_str(&resp).map_err(|_| {
             let preview = resp.chars().take(200).collect::<String>();
-            Error::Parse(format!("server response was not in the expected format; got: {preview}"))
+            Error::Parse(format!(
+                "server response was not in the expected format; got: {preview}"
+            ))
         })?;
         Ok(parsed.into_completion())
     }
