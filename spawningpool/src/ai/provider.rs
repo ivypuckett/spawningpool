@@ -29,6 +29,31 @@ pub enum Reasoning {
     High,
 }
 
+impl std::str::FromStr for Reasoning {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "off" => Ok(Reasoning::Off),
+            "low" => Ok(Reasoning::Low),
+            "medium" => Ok(Reasoning::Medium),
+            "high" => Ok(Reasoning::High),
+            other => Err(format!("unknown reasoning '{other}' (off|low|medium|high)")),
+        }
+    }
+}
+
+impl std::fmt::Display for Reasoning {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Reasoning::Off => "off",
+            Reasoning::Low => "low",
+            Reasoning::Medium => "medium",
+            Reasoning::High => "high",
+        })
+    }
+}
+
 /// Per-request options shared across providers.
 #[derive(Clone, Debug, Default)]
 pub struct CompleteOptions {
@@ -184,6 +209,21 @@ impl From<reqwest::Error> for Error {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn reasoning_parses_and_displays_each_level() {
+        for (text, level) in [
+            ("off", Reasoning::Off),
+            ("low", Reasoning::Low),
+            ("medium", Reasoning::Medium),
+            ("high", Reasoning::High),
+        ] {
+            assert_eq!(text.parse::<Reasoning>(), Ok(level));
+            assert_eq!(level.to_string(), text);
+        }
+        let err = "ultra".parse::<Reasoning>().unwrap_err();
+        assert!(err.contains("off|low|medium|high"));
+    }
 
     #[test]
     fn builtins_registry_resolves_both_apis() {

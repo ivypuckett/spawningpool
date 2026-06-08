@@ -19,6 +19,45 @@ use serde::{Deserialize, Serialize};
 
 use crate::ai::{Api, CompleteOptions, Context, Message, Model, Reasoning, Tool};
 
+/// Which kind of registry entity a reference or referrer points at. Carried by
+/// [`MissingRef`] and [`Referrer`] so a front-end can describe it however it
+/// likes; [`Display`](std::fmt::Display) gives the lowercase noun.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EntityKind {
+    Provider,
+    Model,
+    Tool,
+    Specialist,
+}
+
+impl std::fmt::Display for EntityKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            EntityKind::Provider => "provider",
+            EntityKind::Model => "model",
+            EntityKind::Tool => "tool",
+            EntityKind::Specialist => "specialist",
+        })
+    }
+}
+
+/// A reference, on a definition, to an entity the registry doesn't contain.
+/// Holds only the facts (what kind, which name); how to phrase the fix is left
+/// to the caller, so the CLI and a UI can render it differently.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MissingRef {
+    pub kind: EntityKind,
+    pub name: String,
+}
+
+/// An entity that references some target, collected before a delete so the
+/// caller can warn about the references it would leave dangling.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Referrer {
+    pub kind: EntityKind,
+    pub name: String,
+}
+
 /// A defined provider (`sp define provider`): a name bound to a wire protocol,
 /// endpoint, and the env var holding its API key. Generalizes the catalog's
 /// hard-coded "anthropic"/"lmstudio".
@@ -220,6 +259,91 @@ impl Registry {
         );
         ctx.tools = self.resolve_tools(specialist)?;
         Ok(ctx)
+    }
+
+    /// The first reference a model makes that the registry can't resolve — only
+    /// its provider — or `None` when every reference is satisfied. The gate
+    /// `sp define` (or a UI) runs before persisting a model.
+    pub fn missing_model_ref(&self, model: &ModelDef) -> Option<MissingRef> {
+        if !self.providers.contains_key(&model.provider) {
+            return Some(MissingRef {
+                kind: EntityKind::Provider,
+                name: model.provider.clone(),
+            });
+        }
+        None
+    }
+
+    /// The first reference a specialist makes that the registry can't resolve —
+    /// its provider, then its model, then each tool — or `None` when all resolve.
+    /// Uses [`Specialist::tool_names`], so a constrained specialist's forced tool
+    /// is checked too.
+    pub fn missing_specialist_ref(&self, specialist: &Specialist) -> Option<MissingRef> {
+        if !self.providers.contains_key(&specialist.provider) {
+            return Some(MissingRef {
+                kind: EntityKind::Provider,
+                name: specialist.provider.clone(),
+            });
+        }
+        if !self.models.contains_key(&specialist.model) {
+            return Some(MissingRef {
+                kind: EntityKind::Model,
+                name: specialist.model.clone(),
+            });
+        }
+        for tool in specialist.tool_names() {
+            if !self.tools.contains_key(tool) {
+                return Some(MissingRef {
+                    kind: EntityKind::Tool,
+                    name: tool.clone(),
+                });
+            }
+        }
+        None
+    }
+
+    /// Entities that reference `name` as a `target`, so a delete can warn about
+    /// the references it would orphan. For a provider that's the specialists
+    /// pointing at it plus the models defined under it; specialists are listed
+    /// before models, each group sorted by name.
+    pub fn referrers(&self, target: EntityKind, name: &str) -> Vec<Referrer> {
+        match target {
+            EntityKind::Provider => {
+                let mut refs = self.referrer_specialists(|s| s.provider == name);
+                let mut models: Vec<Referrer> = self
+                    .models
+                    .values()
+                    .filter(|m| m.provider == name)
+                    .map(|m| Referrer {
+                        kind: EntityKind::Model,
+                        name: m.id.clone(),
+                    })
+                    .collect();
+                models.sort_by(|a, b| a.name.cmp(&b.name));
+                refs.extend(models);
+                refs
+            }
+            EntityKind::Model => self.referrer_specialists(|s| s.model == name),
+            EntityKind::Tool => {
+                self.referrer_specialists(|s| s.tool_names().iter().any(|t| t == name))
+            }
+            EntityKind::Specialist => Vec::new(),
+        }
+    }
+
+    /// Specialists matching `pred`, as [`Referrer`]s sorted by name.
+    fn referrer_specialists(&self, pred: impl Fn(&Specialist) -> bool) -> Vec<Referrer> {
+        let mut refs: Vec<Referrer> = self
+            .specialists
+            .values()
+            .filter(|s| pred(s))
+            .map(|s| Referrer {
+                kind: EntityKind::Specialist,
+                name: s.name.clone(),
+            })
+            .collect();
+        refs.sort_by(|a, b| a.name.cmp(&b.name));
+        refs
     }
 }
 
@@ -462,6 +586,157 @@ mod tests {
             registry.resolve_tools(&specialist),
             Err("unknown tool: absent".to_string())
         );
+    }
+
+    fn populated_registry() -> Registry {
+        let mut registry = Registry::default();
+        registry
+            .providers
+            .insert("anthropic".to_string(), anthropic_provider());
+        registry.models.insert(
+            "claude".to_string(),
+            ModelDef {
+                id: "claude".to_string(),
+                name: "Claude".to_string(),
+                provider: "anthropic".to_string(),
+                max_tokens: 1024,
+                context_window: 200_000,
+            },
+        );
+        registry.tools.insert(
+            "ping".to_string(),
+            ToolDef {
+                name: "ping".to_string(),
+                script: PathBuf::from("ping.sh"),
+                description: "Ping".to_string(),
+                params: vec![],
+            },
+        );
+        registry
+    }
+
+    fn spec(
+        provider: &str,
+        model: &str,
+        tools: Vec<String>,
+        constraint: Option<String>,
+    ) -> Specialist {
+        Specialist {
+            name: "spec".to_string(),
+            provider: provider.to_string(),
+            model: model.to_string(),
+            system_prompt: String::new(),
+            tools,
+            constraint,
+            reasoning: Reasoning::Off,
+            stream: false,
+        }
+    }
+
+    #[test]
+    fn missing_model_ref_flags_an_undefined_provider() {
+        let registry = populated_registry();
+        assert_eq!(missing_provider(&registry, "anthropic"), None);
+        assert_eq!(
+            missing_provider(&registry, "ghost"),
+            Some(MissingRef {
+                kind: EntityKind::Provider,
+                name: "ghost".to_string(),
+            })
+        );
+    }
+
+    fn missing_provider(registry: &Registry, provider: &str) -> Option<MissingRef> {
+        registry.missing_model_ref(&ModelDef {
+            provider: provider.to_string(),
+            ..opus()
+        })
+    }
+
+    #[test]
+    fn missing_specialist_ref_reports_provider_then_model_then_tool() {
+        let registry = populated_registry();
+        // Everything present: no missing reference.
+        assert_eq!(
+            registry.missing_specialist_ref(&spec(
+                "anthropic",
+                "claude",
+                vec!["ping".into()],
+                None
+            )),
+            None
+        );
+        // Provider is checked first.
+        assert_eq!(
+            registry.missing_specialist_ref(&spec("ghost", "nope", vec!["absent".into()], None)),
+            Some(MissingRef {
+                kind: EntityKind::Provider,
+                name: "ghost".to_string(),
+            })
+        );
+        // Then model.
+        assert_eq!(
+            registry.missing_specialist_ref(&spec("anthropic", "nope", vec![], None)),
+            Some(MissingRef {
+                kind: EntityKind::Model,
+                name: "nope".to_string(),
+            })
+        );
+        // Then tools — including a constrained tool.
+        assert_eq!(
+            registry.missing_specialist_ref(&spec(
+                "anthropic",
+                "claude",
+                vec![],
+                Some("forced".into())
+            )),
+            Some(MissingRef {
+                kind: EntityKind::Tool,
+                name: "forced".to_string(),
+            })
+        );
+    }
+
+    #[test]
+    fn referrers_lists_specialists_before_models_sorted() {
+        let mut registry = populated_registry();
+        registry.specialists.insert(
+            "spec".into(),
+            spec("anthropic", "claude", vec!["ping".into()], None),
+        );
+
+        // A provider is referenced by the specialist and the model under it.
+        assert_eq!(
+            registry.referrers(EntityKind::Provider, "anthropic"),
+            vec![
+                Referrer {
+                    kind: EntityKind::Specialist,
+                    name: "spec".to_string()
+                },
+                Referrer {
+                    kind: EntityKind::Model,
+                    name: "claude".to_string()
+                },
+            ]
+        );
+        assert_eq!(
+            registry.referrers(EntityKind::Model, "claude"),
+            vec![Referrer {
+                kind: EntityKind::Specialist,
+                name: "spec".to_string()
+            }]
+        );
+        assert_eq!(
+            registry.referrers(EntityKind::Tool, "ping"),
+            vec![Referrer {
+                kind: EntityKind::Specialist,
+                name: "spec".to_string()
+            }]
+        );
+        // An unreferenced name has none.
+        assert!(registry
+            .referrers(EntityKind::Provider, "openai")
+            .is_empty());
     }
 
     #[test]
