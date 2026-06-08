@@ -13,7 +13,7 @@ use futures::StreamExt;
 use crate::ai::{
     Client, CompleteOptions, ContentBlock, Context, Message, Model, Role, StreamEvent, Usage,
 };
-use crate::domain::{Registry, Specialist};
+use crate::domain::{Registry, Specialist, ToolDef};
 
 /// Cap on agentic turns, so a specialist that keeps calling tools without ever
 /// settling on an answer terminates instead of looping forever.
@@ -42,18 +42,22 @@ pub enum RunEvent<'a> {
 
 /// Run `specialist` against `prompt`, executing its tools and looping until it
 /// stops calling them (or, for a constrained specialist, after its single forced
-/// call). Progress is reported through `observer`; `opts` carries the request
-/// options, including any API key the caller has sourced.
+/// call). `tools` is the specialist's resolved tools (the caller reads them from
+/// the [`crate::tools`] folder); only these are exposed to the model, so they're
+/// also the only tools its calls can name. Progress is reported through
+/// `observer`; `opts` carries the request options, including any API key the
+/// caller has sourced.
 pub async fn run_specialist(
     client: &Client,
     registry: &Registry,
     specialist: &Specialist,
     prompt: &str,
+    tools: &[ToolDef],
     opts: &CompleteOptions,
     observer: &mut dyn FnMut(RunEvent<'_>),
 ) -> Result<(), String> {
     let model = registry.resolve_model(specialist)?;
-    let mut ctx = registry.build_context(specialist, prompt)?;
+    let mut ctx = build_context(specialist, prompt, tools);
     // A constrained specialist makes a single forced call; a tools specialist
     // runs agentically until it stops calling tools.
     let agentic = specialist.constraint.is_none();
@@ -87,7 +91,7 @@ pub async fn run_specialist(
 
         let mut results = Vec::with_capacity(calls.len());
         for (id, tool_name, arguments) in &calls {
-            results.push(run_tool_call(registry, id, tool_name, arguments, observer));
+            results.push(run_tool_call(tools, id, tool_name, arguments, observer));
         }
 
         // The constraint guaranteed exactly one call; once executed, we're done.
@@ -148,18 +152,29 @@ async fn one_turn(
     }
 }
 
+/// Assemble the runtime [`Context`] for a turn: the specialist's system prompt,
+/// the user's prompt, and its resolved tools lowered into the wire [`Tool`] type.
+fn build_context(specialist: &Specialist, prompt: &str, tools: &[ToolDef]) -> Context {
+    let mut ctx = Context::new(
+        Some(specialist.system_prompt.clone()),
+        vec![Message::user(prompt)],
+    );
+    ctx.tools = tools.iter().map(ToolDef::to_tool).collect();
+    ctx
+}
+
 /// Execute one tool call by running its backing script, report the outcome
 /// through `observer`, and return the [`ContentBlock::ToolResult`] to feed back
 /// to the model. A failed or unknown tool becomes a tool error so the model can
 /// react.
 fn run_tool_call(
-    registry: &Registry,
+    tools: &[ToolDef],
     id: &str,
     tool_name: &str,
     arguments: &serde_json::Value,
     observer: &mut dyn FnMut(RunEvent<'_>),
 ) -> ContentBlock {
-    let tool = match registry.tools.get(tool_name) {
+    let tool = match tools.iter().find(|t| t.name == tool_name) {
         Some(tool) => tool,
         None => {
             let message = format!("unknown tool: {tool_name}");
@@ -220,7 +235,6 @@ fn args_to_vars(arguments: &serde_json::Value) -> HashMap<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ToolDef;
     use std::path::PathBuf;
 
     fn write_script(body: &str) -> PathBuf {
@@ -238,18 +252,42 @@ mod tests {
         path
     }
 
-    fn registry_with_tool(name: &str, script: PathBuf) -> Registry {
-        let mut registry = Registry::default();
-        registry.tools.insert(
-            name.to_string(),
-            ToolDef {
-                name: name.to_string(),
-                script,
-                description: String::new(),
-                params: vec![],
-            },
+    fn tool(name: &str, script: PathBuf) -> ToolDef {
+        ToolDef {
+            name: name.to_string(),
+            script,
+            description: String::new(),
+            params: vec![],
+        }
+    }
+
+    #[test]
+    fn build_context_carries_system_prompt_user_turn_and_tools() {
+        let specialist = Specialist {
+            name: "netop".to_string(),
+            provider: "anthropic".to_string(),
+            model: "claude-opus-4-8".to_string(),
+            system_prompt: "You ping hosts.".to_string(),
+            tools: vec!["ping".to_string()],
+            constraint: None,
+            reasoning: crate::ai::Reasoning::Off,
+            stream: false,
+        };
+        let tools = vec![ToolDef {
+            name: "ping".to_string(),
+            script: PathBuf::from("ping.sh"),
+            description: "Ping a host".to_string(),
+            params: vec!["host".to_string()],
+        }];
+
+        let ctx = build_context(&specialist, "ping example.com", &tools);
+        assert_eq!(ctx.system.as_deref(), Some("You ping hosts."));
+        assert_eq!(ctx.tools.len(), 1);
+        assert_eq!(ctx.tools[0].name, "ping");
+        assert_eq!(
+            ctx.messages[0].content,
+            vec![ContentBlock::text("ping example.com")]
         );
-        registry
     }
 
     #[test]
@@ -284,10 +322,10 @@ mod tests {
     #[test]
     fn run_tool_call_returns_result_on_success_and_reports_output() {
         let script = write_script("#!/bin/sh\necho \"hi $NAME\"\n");
-        let registry = registry_with_tool("greet", script.clone());
+        let tools = vec![tool("greet", script.clone())];
         let mut events = Vec::new();
         let block = run_tool_call(
-            &registry,
+            &tools,
             "id1",
             "greet",
             &serde_json::json!({ "NAME": "world" }),
@@ -315,14 +353,8 @@ mod tests {
     #[test]
     fn run_tool_call_returns_error_on_nonzero_exit() {
         let script = write_script("#!/bin/sh\necho boom >&2\nexit 1\n");
-        let registry = registry_with_tool("fail", script.clone());
-        let block = run_tool_call(
-            &registry,
-            "id2",
-            "fail",
-            &serde_json::json!({}),
-            &mut |_| {},
-        );
+        let tools = vec![tool("fail", script.clone())];
+        let block = run_tool_call(&tools, "id2", "fail", &serde_json::json!({}), &mut |_| {});
         std::fs::remove_file(&script).ok();
         match block {
             ContentBlock::ToolResult {
@@ -337,19 +369,12 @@ mod tests {
 
     #[test]
     fn run_tool_call_reports_unknown_tool_as_error() {
-        let registry = Registry::default();
         let mut failed = false;
-        let block = run_tool_call(
-            &registry,
-            "id3",
-            "ghost",
-            &serde_json::json!({}),
-            &mut |e| {
-                if matches!(e, RunEvent::ToolFailed { .. }) {
-                    failed = true;
-                }
-            },
-        );
+        let block = run_tool_call(&[], "id3", "ghost", &serde_json::json!({}), &mut |e| {
+            if matches!(e, RunEvent::ToolFailed { .. }) {
+                failed = true;
+            }
+        });
         match block {
             ContentBlock::ToolResult {
                 tool_call_id,
@@ -368,12 +393,12 @@ mod tests {
     #[test]
     fn run_tool_call_enriches_launch_failure_with_remediation() {
         // A tool whose script can't be launched surfaces a fix, not a raw OS error.
-        let registry = registry_with_tool(
+        let tools = vec![tool(
             "ghost_script",
             PathBuf::from("/nonexistent/sp_tool_does_not_exist.sh"),
-        );
+        )];
         let block = run_tool_call(
-            &registry,
+            &tools,
             "id",
             "ghost_script",
             &serde_json::json!({}),

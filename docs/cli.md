@@ -150,9 +150,13 @@ sp define tool <name> --script <path>
 sp define tool ping --script ./scripts/ping.sh
 ```
 
-The script path is resolved to an absolute path and checked at define time: it
-must exist and be executable (`chmod +x`), failing here with a fix rather than
-mid-run. A missing `# desc:` header warns but succeeds.
+The script is checked at define time: it must exist and be executable
+(`chmod +x`), failing here with a fix rather than mid-run. A missing `# desc:`
+header warns but succeeds. Rather than recording the tool in `registry.json`,
+this symlinks the script into the tools folder (`tools/` beside the registry),
+which is the source of truth — so you can equally drop an executable script into
+that folder by hand, edit one in place (its header is re-read on every run), or
+`rm` one. Re-defining a tool replaces whatever backed that name.
 
 ---
 
@@ -164,7 +168,7 @@ Prints names, sorted, one per line.
 sp list providers
 sp list models
 sp list specialists
-sp list tools
+sp list tools          # reads the tools folder, not the registry
 
 # Special: query a running LM Studio server for the model ids it has loaded
 # (at $LMSTUDIO_BASE_URL, default http://localhost:1234), not the registry.
@@ -190,6 +194,7 @@ sp show tool ping
 
 Removes one entity. Deleting a provider, model, or tool that specialists still
 reference warns about each dangling reference (the delete still happens).
+Deleting a tool removes its script from the tools folder.
 
 ```sh
 sp delete specialist netop

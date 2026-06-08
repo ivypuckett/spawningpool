@@ -1,8 +1,31 @@
 # Writing tools
 
-A tool is a single **executable script**. There is no YAML, no task runner, and
-no plugin API — `sp define tool` reads two header comments to build the tool the
-model sees, and the runner executes the script when the model calls it.
+A tool is a single **executable script** that lives in a folder. There's no YAML,
+no task runner, no plugin API, and no registry entry — you add a tool by putting a
+script in the folder, and the runner executes it when the model calls it.
+
+## Where tools live
+
+Tools live in an `ls`-able folder: `tools/` next to your registry, so
+`~/.spawningpool/tools/` by default. That folder **is** the catalog — there's
+nothing about tools in `registry.json`, so you manage them the way you'd manage
+any folder of scripts.
+
+- **A tool's name is its file name**, with any extension stripped — a script (or
+  symlink) named `ping` and a file `ping.sh` both become the `ping` tool.
+- **The header is read on every run**, so editing a script changes its description
+  and parameters live; there's nothing to re-sync or re-define.
+- **Add one** either by dropping an executable script into the folder yourself:
+  ```sh
+  install -D -m 755 ./ping.sh ~/.spawningpool/tools/ping
+  ```
+  or by letting `sp define tool` symlink one in for you — handy when the script
+  lives in a project repo and you want it tracked there, not copied:
+  ```sh
+  sp define tool ping --script ./ping.sh
+  ```
+- **See what's there** with `sp list tools`, inspect one with `sp show tool <name>`,
+  and remove one with `sp delete tool <name>` (or just `rm` the file).
 
 ## The script format
 
@@ -31,8 +54,8 @@ no shell-injection surface. Non-string JSON values are passed as their JSON text
 - A shebang line (e.g. `#!/bin/sh`, `#!/usr/bin/env python3`).
 - The executable bit set: `chmod +x your-script.sh`.
 
-Both are checked at `sp define tool` time, so a broken script fails immediately
-with a fix instead of mid-run.
+`sp define tool` checks both up front, so a broken script fails immediately with
+a fix. A script you drop into the folder by hand is checked when it's first run.
 
 ## Exit codes
 
@@ -53,10 +76,12 @@ ping -c 3 "$HOST"
 EOF
 chmod +x ping.sh
 
-# 2. Register it as a tool
+# 2. Make it a tool: symlink it into the tools folder.
+#    (Or drop it in directly: install -D -m 755 ./ping.sh ~/.spawningpool/tools/ping)
 sp define tool ping --script ./ping.sh
 
-# 3. Confirm what the model will see
+# 3. Confirm it's there and what the model will see (header is read live)
+sp list tools
 sp show tool ping
 
 # 4. Give it to a specialist (agentic — the model decides when to call it)

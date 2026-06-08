@@ -1,12 +1,13 @@
 //! The definition layer: persisted templates that compile down into the
 //! runtime [`crate::ai`] types.
 //!
-//! Nothing here talks to a provider. A [`ProviderDef`]/[`ModelDef`]/[`Specialist`]/
-//! [`ToolDef`] is plain, serializable data that `sp define` writes and `sp list`
-//! reads. The bridges ([`ToolDef::to_tool`], [`ModelDef::resolve`],
-//! [`Registry::build_context`], [`Registry::resolve_model`]) lower these
-//! definitions into the [`ai::Context`], [`ai::Tool`], and [`ai::Model`] the
-//! client actually executes.
+//! Nothing here talks to a provider or the filesystem. A [`ProviderDef`]/
+//! [`ModelDef`]/[`Specialist`] is plain, serializable data that `sp define`
+//! writes and `sp list` reads. The bridges ([`ModelDef::resolve`],
+//! [`Registry::resolve_model`]) lower these definitions into the [`ai::Model`]
+//! the client executes. Tools are the exception: they live as scripts in a
+//! folder (see [`crate::tools`]), not in the [`Registry`], so a [`ToolDef`] here
+//! is a derived view of one of those scripts rather than persisted data.
 //!
 //! Provider/model split follows option A: a [`ModelDef`] references a provider
 //! by name and *derives* its `api`/`base_url` from the [`ProviderDef`] rather
@@ -17,7 +18,7 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
-use crate::ai::{Api, CompleteOptions, Context, Message, Model, Reasoning, Tool};
+use crate::ai::{Api, CompleteOptions, Model, Reasoning, Tool};
 
 /// Which kind of registry entity a reference or referrer points at. Carried by
 /// [`MissingRef`] and [`Referrer`] so a front-end can describe it however it
@@ -182,10 +183,11 @@ impl Specialist {
     }
 }
 
-/// A defined tool (`sp define tool`), backed by one executable script. The
+/// A tool, backed by one executable script in the [`crate::tools`] folder. The
 /// script's `# desc:` header becomes the description and its `# params:` header
-/// the parameters — see [`crate::summarize`].
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+/// the parameters — see [`crate::summarize`]. This is a derived view read from
+/// the script, not persisted data; only [`Serialize`] is needed, for `sp show`.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct ToolDef {
     pub name: String,
     pub script: PathBuf,
@@ -214,7 +216,8 @@ impl ToolDef {
     }
 }
 
-/// The on-disk catalog backing `sp define` / `sp list` / `sp delete`.
+/// The on-disk catalog backing `sp define` / `sp list` / `sp delete`. Tools
+/// aren't here — they live as scripts in the [`crate::tools`] folder.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Registry {
     #[serde(default)]
@@ -223,8 +226,6 @@ pub struct Registry {
     pub models: HashMap<String, ModelDef>,
     #[serde(default)]
     pub specialists: HashMap<String, Specialist>,
-    #[serde(default)]
-    pub tools: HashMap<String, ToolDef>,
 }
 
 impl Registry {
@@ -239,33 +240,6 @@ impl Registry {
             .get(&specialist.model)
             .ok_or_else(|| format!("unknown model: {}", specialist.model))?;
         Ok(model.resolve(provider))
-    }
-
-    /// Resolve a specialist's named tools into runtime [`Tool`]s. Uses
-    /// [`Specialist::tool_names`], so a constrained specialist resolves its single
-    /// forced tool even though its [`Specialist::tools`] list is empty.
-    pub fn resolve_tools(&self, specialist: &Specialist) -> Result<Vec<Tool>, String> {
-        specialist
-            .tool_names()
-            .iter()
-            .map(|name| {
-                self.tools
-                    .get(name)
-                    .map(ToolDef::to_tool)
-                    .ok_or_else(|| format!("unknown tool: {name}"))
-            })
-            .collect()
-    }
-
-    /// Compile a specialist + a user prompt into a runtime [`Context`] (system
-    /// prompt, the user turn, and the specialist's resolved tools).
-    pub fn build_context(&self, specialist: &Specialist, prompt: &str) -> Result<Context, String> {
-        let mut ctx = Context::new(
-            Some(specialist.system_prompt.clone()),
-            vec![Message::user(prompt)],
-        );
-        ctx.tools = self.resolve_tools(specialist)?;
-        Ok(ctx)
     }
 
     /// The first reference a model makes that the registry can't resolve — only
@@ -284,8 +258,13 @@ impl Registry {
     /// The first reference a specialist makes that the registry can't resolve —
     /// its provider, then its model, then each tool — or `None` when all resolve.
     /// Uses [`Specialist::tool_names`], so a constrained specialist's forced tool
-    /// is checked too.
-    pub fn missing_specialist_ref(&self, specialist: &Specialist) -> Option<MissingRef> {
+    /// is checked too. Tools live in a folder, not the registry, so the caller
+    /// supplies `tool_exists` (e.g. [`crate::tools::exists`]) to check them.
+    pub fn missing_specialist_ref(
+        &self,
+        specialist: &Specialist,
+        tool_exists: impl Fn(&str) -> bool,
+    ) -> Option<MissingRef> {
         if !self.providers.contains_key(&specialist.provider) {
             return Some(MissingRef {
                 kind: EntityKind::Provider,
@@ -299,7 +278,7 @@ impl Registry {
             });
         }
         for tool in specialist.tool_names() {
-            if !self.tools.contains_key(tool) {
+            if !tool_exists(tool) {
                 return Some(MissingRef {
                     kind: EntityKind::Tool,
                     name: tool.clone(),
@@ -357,7 +336,6 @@ impl Registry {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ai::ContentBlock;
 
     fn anthropic_provider() -> ProviderDef {
         ProviderDef {
@@ -404,41 +382,6 @@ mod tests {
         assert_eq!(
             tool.parameters["required"],
             serde_json::json!(["env", "region"])
-        );
-    }
-
-    #[test]
-    fn build_context_carries_system_prompt_user_turn_and_tools() {
-        let mut registry = Registry::default();
-        registry.tools.insert(
-            "ping".to_string(),
-            ToolDef {
-                name: "ping".to_string(),
-                script: PathBuf::from("ping.sh"),
-                description: "Ping a host".to_string(),
-                params: vec!["host".to_string()],
-            },
-        );
-        let specialist = Specialist {
-            name: "netop".to_string(),
-            provider: "anthropic".to_string(),
-            model: "claude-opus-4-8".to_string(),
-            system_prompt: "You ping hosts.".to_string(),
-            tools: vec!["ping".to_string()],
-            constraint: None,
-            reasoning: Reasoning::Off,
-            stream: false,
-        };
-
-        let ctx = registry
-            .build_context(&specialist, "ping example.com")
-            .unwrap();
-        assert_eq!(ctx.system.as_deref(), Some("You ping hosts."));
-        assert_eq!(ctx.tools.len(), 1);
-        assert_eq!(ctx.tools[0].name, "ping");
-        assert_eq!(
-            ctx.messages[0].content,
-            vec![ContentBlock::text("ping example.com")]
         );
     }
 
@@ -544,44 +487,14 @@ mod tests {
     }
 
     #[test]
-    fn build_context_surfaces_the_constrained_tool() {
-        let mut registry = Registry::default();
-        registry.tools.insert(
-            "classify".to_string(),
-            ToolDef {
-                name: "classify".to_string(),
-                script: PathBuf::from("classify.sh"),
-                description: "Classify input".to_string(),
-                params: vec!["text".to_string()],
-            },
-        );
-        let specialist = Specialist {
-            name: "classifier".to_string(),
-            provider: "anthropic".to_string(),
-            model: "claude-opus-4-8".to_string(),
-            system_prompt: "You classify.".to_string(),
-            tools: vec![],
-            constraint: Some("classify".to_string()),
-            reasoning: Reasoning::Off,
-            stream: false,
-        };
-
-        // The forced tool must be present in the request even though `tools` is
-        // empty, or the provider would reject the tool_choice.
-        let ctx = registry.build_context(&specialist, "spam?").unwrap();
-        assert_eq!(ctx.tools.len(), 1);
-        assert_eq!(ctx.tools[0].name, "classify");
-    }
-
-    #[test]
-    fn resolve_reports_missing_references() {
+    fn resolve_model_reports_a_missing_provider() {
         let registry = Registry::default();
         let specialist = Specialist {
             name: "x".to_string(),
             provider: "ghost".to_string(),
             model: "nope".to_string(),
             system_prompt: String::new(),
-            tools: vec!["absent".to_string()],
+            tools: vec![],
             constraint: None,
             reasoning: Reasoning::default(),
             stream: false,
@@ -589,10 +502,6 @@ mod tests {
         assert_eq!(
             registry.resolve_model(&specialist),
             Err("unknown provider: ghost".to_string())
-        );
-        assert_eq!(
-            registry.resolve_tools(&specialist),
-            Err("unknown tool: absent".to_string())
         );
     }
 
@@ -609,15 +518,6 @@ mod tests {
                 provider: "anthropic".to_string(),
                 max_tokens: 1024,
                 context_window: 200_000,
-            },
-        );
-        registry.tools.insert(
-            "ping".to_string(),
-            ToolDef {
-                name: "ping".to_string(),
-                script: PathBuf::from("ping.sh"),
-                description: "Ping".to_string(),
-                params: vec![],
             },
         );
         registry
@@ -664,19 +564,22 @@ mod tests {
     #[test]
     fn missing_specialist_ref_reports_provider_then_model_then_tool() {
         let registry = populated_registry();
+        // The caller supplies tool existence; here only "ping" exists.
+        let tool_exists = |name: &str| name == "ping";
         // Everything present: no missing reference.
         assert_eq!(
-            registry.missing_specialist_ref(&spec(
-                "anthropic",
-                "claude",
-                vec!["ping".into()],
-                None
-            )),
+            registry.missing_specialist_ref(
+                &spec("anthropic", "claude", vec!["ping".into()], None),
+                tool_exists
+            ),
             None
         );
         // Provider is checked first.
         assert_eq!(
-            registry.missing_specialist_ref(&spec("ghost", "nope", vec!["absent".into()], None)),
+            registry.missing_specialist_ref(
+                &spec("ghost", "nope", vec!["absent".into()], None),
+                tool_exists
+            ),
             Some(MissingRef {
                 kind: EntityKind::Provider,
                 name: "ghost".to_string(),
@@ -684,7 +587,7 @@ mod tests {
         );
         // Then model.
         assert_eq!(
-            registry.missing_specialist_ref(&spec("anthropic", "nope", vec![], None)),
+            registry.missing_specialist_ref(&spec("anthropic", "nope", vec![], None), tool_exists),
             Some(MissingRef {
                 kind: EntityKind::Model,
                 name: "nope".to_string(),
@@ -692,12 +595,10 @@ mod tests {
         );
         // Then tools — including a constrained tool.
         assert_eq!(
-            registry.missing_specialist_ref(&spec(
-                "anthropic",
-                "claude",
-                vec![],
-                Some("forced".into())
-            )),
+            registry.missing_specialist_ref(
+                &spec("anthropic", "claude", vec![], Some("forced".into())),
+                tool_exists
+            ),
             Some(MissingRef {
                 kind: EntityKind::Tool,
                 name: "forced".to_string(),

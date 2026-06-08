@@ -2,6 +2,7 @@ pub mod ai;
 pub mod domain;
 pub mod run;
 pub mod store;
+pub mod tools;
 
 mod script;
 pub use script::{prepare_script, run_script, summarize, ScriptError, ScriptRun, ScriptSummary};

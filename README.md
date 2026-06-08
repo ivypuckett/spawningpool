@@ -17,11 +17,13 @@ Goal: create hyper-specific specialists with minimal system prompts that do one 
 
 ## CLI
 
-The binary is named `spawningpool`; its CLI name is `sp`. Definitions are
-persisted to a single JSON registry at `$SPAWNINGPOOL_HOME/registry.json`
-(default `~/.spawningpool/registry.json`); set `$SPAWNINGPOOL_REGISTRY` to
-override the exact path. A missing file loads as an empty registry, so the
-first `define` creates it.
+The binary is named `spawningpool`; its CLI name is `sp`. Provider, model, and
+specialist definitions are persisted to a single JSON registry at
+`$SPAWNINGPOOL_HOME/registry.json` (default `~/.spawningpool/registry.json`); set
+`$SPAWNINGPOOL_REGISTRY` to override the exact path. A missing file loads as an
+empty registry, so the first `define` creates it. Tools are the exception: each
+is just an executable script in the `tools/` folder beside the registry, not a
+registry entry (see [Writing tools](docs/tools.md)).
 
 ```bash
 # run (alias: spawn)
@@ -91,8 +93,9 @@ call are defined in your own registry via `sp define model`.
 
 ### Tools
 
-A tool is a single executable script. `sp define tool name --script PATH` reads
-two header comments to build the tool the model sees:
+A tool is a single executable script in the `tools/` folder. `sp define tool
+name --script PATH` symlinks one in for you (or just drop an executable script
+into the folder yourself); two header comments build the tool the model sees:
 
 ```sh
 #!/bin/sh

@@ -7,7 +7,6 @@ use clap::{Parser, Subcommand};
 use spawningpool::ai::{Api, Client, Reasoning};
 use spawningpool::{
     EntityKind, ModelDef, ProviderDef, Referrer, Registry, RunEvent, ScriptError, Specialist,
-    ToolDef,
 };
 use std::collections::HashMap;
 use std::io::Write;
@@ -273,7 +272,7 @@ fn no_specialists_state(registry: &Registry) -> String {
         progress(2),
         String::new(),
         "A specialist is a hyper-specific agent: one model, one system prompt,".to_string(),
-        "and an optional set of tools it may call.".to_string(),
+        "and an optional set of tools (scripts) it may call.".to_string(),
         String::new(),
         "Step 3: define one.".to_string(),
         String::new(),
@@ -282,6 +281,11 @@ fn no_specialists_state(registry: &Registry) -> String {
             model.provider, model.id
         ),
         "        --system-prompt '<what this specialist does>'".to_string(),
+        String::new(),
+        "  Optional: to let it call a tool, add one first. A tool is just an".to_string(),
+        "  executable script in ~/.spawningpool/tools/. Drop one in (or run the".to_string(),
+        "  command below), then pass --tools <name> above:".to_string(),
+        "      sp define tool <name> --script <path>".to_string(),
     ]
     .join("\n")
 }
@@ -306,9 +310,11 @@ fn ready_state(registry: &Registry) -> String {
         ),
         String::new(),
         format!("  Specialists: {}", available_names(&registry.specialists)),
-        "  More: `sp list specialists`, `sp show specialist <name>`, \
-         `sp define tool <name> --script <path>`."
-            .to_string(),
+        String::new(),
+        "  To give a specialist a tool to call, put an executable script in".to_string(),
+        "  ~/.spawningpool/tools/ (or `sp define tool <name> --script <path>`),".to_string(),
+        "  then add --tools <name> when you define the specialist. `sp list tools`".to_string(),
+        "  shows what's there.".to_string(),
     ]
     .join("\n")
 }
@@ -341,6 +347,13 @@ async fn run_specialist(name: &str, prompt: &str) -> Result<(), String> {
         .specialists
         .get(name)
         .ok_or_else(|| format!("unknown specialist: {name}"))?;
+
+    // Resolve the specialist's tools from the folder up front, so a missing or
+    // unreadable tool fails before the model starts rather than mid-run.
+    let tools = spawningpool::tools::resolve_all(
+        &spawningpool::store::tools_dir(),
+        specialist.tool_names(),
+    )?;
 
     let mut opts = specialist.complete_options();
     if let Some(provider) = registry.providers.get(&specialist.provider) {
@@ -375,8 +388,16 @@ async fn run_specialist(name: &str, prompt: &str) -> Result<(), String> {
         RunEvent::ToolRan { name, output, .. } => println!("[tool {name}]\n{output}"),
         RunEvent::ToolFailed { name, message } => eprintln!("[tool {name}] {message}"),
     };
-    spawningpool::run::run_specialist(&client, &registry, specialist, prompt, &opts, &mut render)
-        .await
+    spawningpool::run::run_specialist(
+        &client,
+        &registry,
+        specialist,
+        prompt,
+        &tools,
+        &opts,
+        &mut render,
+    )
+    .await
 }
 
 async fn list(kind: ListKind) -> Result<(), String> {
@@ -384,12 +405,30 @@ async fn list(kind: ListKind) -> Result<(), String> {
     if let ListKind::Models { remote: true } = kind {
         return list_remote_models().await;
     }
+    // Tools live in a folder, not the registry, so list them from disk.
+    if let ListKind::Tools = kind {
+        let dir = spawningpool::store::tools_dir();
+        let names = spawningpool::tools::list(&dir)?;
+        // An empty folder is the most confusing case ("where do tools come
+        // from?"), so point the way — on stderr, leaving stdout pipe-clean.
+        if names.is_empty() {
+            eprintln!(
+                "no tools yet — drop an executable script in {} or run \
+                 `sp define tool <name> --script <path>` (see `sp show tool`).",
+                dir.display()
+            );
+        }
+        for name in names {
+            println!("{name}");
+        }
+        return Ok(());
+    }
     let registry = spawningpool::store::load()?;
     let mut names: Vec<&String> = match kind {
         ListKind::Specialists => registry.specialists.keys().collect(),
         ListKind::Providers => registry.providers.keys().collect(),
         ListKind::Models { .. } => registry.models.keys().collect(),
-        ListKind::Tools => registry.tools.keys().collect(),
+        ListKind::Tools => unreachable!("tools listed from the folder above"),
     };
     names.sort();
     for name in names {
@@ -441,10 +480,10 @@ fn show(entity: ShowEntity) -> Result<(), String> {
             format!("model {name}"),
         ),
         ShowEntity::Tool { name } => (
-            registry
-                .tools
-                .get(&name)
-                .map(|d| serde_json::to_string_pretty(d).expect("definition serializes")),
+            // Tools live in the folder; resolve reads the script's header.
+            spawningpool::tools::resolve(&spawningpool::store::tools_dir(), &name)
+                .ok()
+                .map(|d| serde_json::to_string_pretty(&d).expect("definition serializes")),
             format!("tool {name}"),
         ),
     };
@@ -458,6 +497,11 @@ fn show(entity: ShowEntity) -> Result<(), String> {
 }
 
 fn define(entity: DefineEntity) -> Result<(), String> {
+    // Tools aren't part of the registry, so install them straight into the
+    // folder without touching it.
+    if let DefineEntity::Tool { name, script } = &entity {
+        return define_tool(name, script);
+    }
     let mut registry = spawningpool::store::load()?;
     let what = match entity {
         DefineEntity::Provider {
@@ -516,40 +560,66 @@ fn define(entity: DefineEntity) -> Result<(), String> {
                 stream,
             };
             def.validate()?;
-            check_specialist_refs(&registry, &def)?;
+            check_specialist_refs(&registry, &def, &spawningpool::store::tools_dir())?;
             registry.specialists.insert(name.clone(), def);
             format!("specialist {name}")
         }
-        DefineEntity::Tool { name, script } => {
-            // Resolve to an absolute, runnable path now so the tool works
-            // regardless of the directory `sp run` is later invoked from, and
-            // so an un-runnable script fails here with a fix rather than as a
-            // cryptic launch error mid-run.
-            let script = resolve_script(&script)?;
-            let summary = spawningpool::summarize(&script).map_err(|e| e.to_string())?;
-            if summary.desc.is_none() {
-                eprintln!(
-                    "warning: tool '{name}' has no '# desc:' header, so the model will see an \
-                     empty description.\n  Add a line like '# desc: <what it does>' to {}.",
-                    script.display()
-                );
-            }
-            let def = ToolDef {
-                name: name.clone(),
-                script,
-                description: summary.desc.unwrap_or_default(),
-                params: summary.params,
-            };
-            registry.tools.insert(name.clone(), def);
-            format!("tool {name}")
-        }
+        // Tools live as scripts in the folder, not the registry, so they're
+        // handled separately and never reach the registry save below.
+        DefineEntity::Tool { .. } => unreachable!("handled by define_tool before load"),
     };
     spawningpool::store::save(&registry)?;
     println!("defined {what}");
     Ok(())
 }
 
+/// Install a tool into the [`spawningpool::store::tools_dir`] folder as a symlink
+/// to its script, so the tool's `# desc:`/`# params:` header stays live (editing
+/// the script updates the tool) and the script can keep living in its own repo.
+/// The script is validated as runnable now, and any existing entry for this tool
+/// name is replaced.
+fn define_tool(name: &str, script: &Path) -> Result<(), String> {
+    if !spawningpool::tools::is_valid_tool_name(name) {
+        return Err(format!(
+            "'{name}' isn't a valid tool name; use letters, digits, '_' or '-' (max 64 chars)."
+        ));
+    }
+    // Resolve to an absolute, runnable path now so the tool works regardless of
+    // the directory `sp run` is later invoked from, and so an un-runnable script
+    // fails here with a fix rather than as a cryptic launch error mid-run.
+    let script = resolve_script(script)?;
+    let summary = spawningpool::summarize(&script).map_err(|e| e.to_string())?;
+    if summary.desc.is_none() {
+        eprintln!(
+            "warning: tool '{name}' has no '# desc:' header, so the model will see an empty \
+             description.\n  Add a line like '# desc: <what it does>' to {}.",
+            script.display()
+        );
+    }
+
+    let dir = spawningpool::store::tools_dir();
+    std::fs::create_dir_all(&dir)
+        .map_err(|e| format!("failed to create {}: {e}", dir.display()))?;
+    // Replace any existing entry for this name (a symlink or a stray `name.ext`)
+    // so a redefine is idempotent and can't leave an ambiguous pair behind.
+    spawningpool::tools::remove(&dir, name)?;
+    let link = dir.join(name);
+    std::os::unix::fs::symlink(&script, &link).map_err(|e| {
+        format!(
+            "failed to link {} -> {}: {e}",
+            link.display(),
+            script.display()
+        )
+    })?;
+    println!("defined tool {name}");
+    Ok(())
+}
+
 fn delete(entity: DeleteEntity) -> Result<(), String> {
+    // Tools are files in the folder, not registry entries.
+    if let DeleteEntity::Tool { name } = &entity {
+        return delete_tool(name);
+    }
     let mut registry = spawningpool::store::load()?;
     // Collect any entities that still reference what we're about to remove,
     // before removing it, so we can warn about the references it leaves dangling.
@@ -581,16 +651,7 @@ fn delete(entity: DeleteEntity) -> Result<(), String> {
                 referrers,
             )
         }
-        DeleteEntity::Tool { name } => {
-            let referrers = referrers_of_tool(&registry, &name);
-            (
-                registry.tools.remove(&name).is_some(),
-                format!("tool {name}"),
-                "tool",
-                name,
-                referrers,
-            )
-        }
+        DeleteEntity::Tool { .. } => unreachable!("handled by delete_tool before load"),
     };
     if !removed {
         return Err(format!("no such {what}"));
@@ -598,6 +659,19 @@ fn delete(entity: DeleteEntity) -> Result<(), String> {
     spawningpool::store::save(&registry)?;
     println!("deleted {what}");
     warn_orphans(kind, &name, &referrers);
+    Ok(())
+}
+
+/// Delete a tool by removing its script(s) from the folder, warning about any
+/// specialists that still reference it (those references come from the registry).
+fn delete_tool(name: &str) -> Result<(), String> {
+    let registry = spawningpool::store::load()?;
+    let referrers = referrers_of_tool(&registry, name);
+    if !spawningpool::tools::remove(&spawningpool::store::tools_dir(), name)? {
+        return Err(format!("no such tool {name}"));
+    }
+    println!("deleted tool {name}");
+    warn_orphans("tool", name, &referrers);
     Ok(())
 }
 
@@ -664,6 +738,16 @@ fn available_names<V>(map: &HashMap<String, V>) -> String {
     names.join(", ")
 }
 
+/// The folder's tool names, comma-joined, for the "Defined tools: ..." line in a
+/// referential error. Mirrors [`available_names`] but reads the tools folder; an
+/// unreadable folder is reported as none rather than failing the error message.
+fn defined_tools(tools_dir: &Path) -> String {
+    match spawningpool::tools::list(tools_dir) {
+        Ok(names) if !names.is_empty() => names.join(", "),
+        _ => "(none defined yet)".to_string(),
+    }
+}
+
 /// Reject a model that names a provider the registry doesn't hold, naming the
 /// provider, what's available, and how to define it.
 fn check_model_refs(registry: &Registry, model: &ModelDef) -> Result<(), String> {
@@ -690,8 +774,14 @@ fn check_model_refs(registry: &Registry, model: &ModelDef) -> Result<(), String>
 /// Reject a specialist that references a provider, model, or tool the registry
 /// doesn't hold. Each error names the missing entity, lists what's defined, and
 /// shows the command that would create it.
-fn check_specialist_refs(registry: &Registry, specialist: &Specialist) -> Result<(), String> {
-    let Some(missing) = registry.missing_specialist_ref(specialist) else {
+fn check_specialist_refs(
+    registry: &Registry,
+    specialist: &Specialist,
+    tools_dir: &Path,
+) -> Result<(), String> {
+    let Some(missing) = registry.missing_specialist_ref(specialist, |name| {
+        spawningpool::tools::exists(tools_dir, name)
+    }) else {
         return Ok(());
     };
     let message = match missing.kind {
@@ -735,7 +825,7 @@ fn check_specialist_refs(registry: &Registry, specialist: &Specialist) -> Result
                 specialist.name, missing.name
             ),
             String::new(),
-            format!("  Defined tools: {}", available_names(&registry.tools)),
+            format!("  Defined tools: {}", defined_tools(tools_dir)),
             String::new(),
             "  Back it with a script:".to_string(),
             format!("      sp define tool {} --script <path>", missing.name),
@@ -924,16 +1014,26 @@ mod tests {
                 context_window: 200_000,
             },
         );
-        registry.tools.insert(
-            "ping".into(),
-            ToolDef {
-                name: "ping".into(),
-                script: PathBuf::from("ping.sh"),
-                description: "Ping".into(),
-                params: vec![],
-            },
-        );
         registry
+    }
+
+    /// A temp tools folder containing a single executable `ping` script, plus the
+    /// folder path. The caller removes the folder when done.
+    fn tools_dir_with_ping() -> PathBuf {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::env::temp_dir().join(format!(
+            "sp_cli_tools_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let script = dir.join("ping");
+        std::fs::write(&script, "#!/bin/sh\n# desc: Ping\necho hi\n").unwrap();
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+        dir
     }
 
     fn specialist_ref(
@@ -966,23 +1066,31 @@ mod tests {
     #[test]
     fn check_specialist_refs_passes_when_all_present() {
         let registry = populated_registry();
+        let dir = tools_dir_with_ping();
         let spec = specialist_ref("anthropic", "claude", vec!["ping".into()], None);
-        assert!(check_specialist_refs(&registry, &spec).is_ok());
+        let result = check_specialist_refs(&registry, &spec, &dir);
+        std::fs::remove_dir_all(&dir).ok();
+        assert!(result.is_ok());
     }
 
     #[test]
     fn check_specialist_refs_reports_missing_provider_model_and_tool() {
         let registry = populated_registry();
+        let dir = tools_dir_with_ping();
 
-        let err =
-            check_specialist_refs(&registry, &specialist_ref("ghost", "claude", vec![], None))
-                .unwrap_err();
+        let err = check_specialist_refs(
+            &registry,
+            &specialist_ref("ghost", "claude", vec![], None),
+            &dir,
+        )
+        .unwrap_err();
         assert!(err.contains("references provider 'ghost'"));
         assert!(err.contains("sp define provider ghost"));
 
         let err = check_specialist_refs(
             &registry,
             &specialist_ref("anthropic", "nope", vec![], None),
+            &dir,
         )
         .unwrap_err();
         assert!(err.contains("references model 'nope'"));
@@ -991,8 +1099,10 @@ mod tests {
         let err = check_specialist_refs(
             &registry,
             &specialist_ref("anthropic", "claude", vec!["absent".into()], None),
+            &dir,
         )
         .unwrap_err();
+        std::fs::remove_dir_all(&dir).ok();
         assert!(err.contains("references tool 'absent'"));
         assert!(err.contains("sp define tool absent"));
     }
@@ -1000,9 +1110,11 @@ mod tests {
     #[test]
     fn check_specialist_refs_validates_the_constrained_tool() {
         let registry = populated_registry();
+        let dir = tools_dir_with_ping();
         // A constraint names a tool too, so an undefined forced tool is caught.
         let spec = specialist_ref("anthropic", "claude", vec![], Some("absent".into()));
-        let err = check_specialist_refs(&registry, &spec).unwrap_err();
+        let err = check_specialist_refs(&registry, &spec, &dir).unwrap_err();
+        std::fs::remove_dir_all(&dir).ok();
         assert!(err.contains("references tool 'absent'"));
     }
 
