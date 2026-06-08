@@ -56,16 +56,16 @@ fn save_to(path: &Path, registry: &Registry) -> Result<(), String> {
 mod tests {
     use super::*;
     use spawningpool::ai::Reasoning;
-    use spawningpool::Expert;
+    use spawningpool::Specialist;
 
     #[test]
     fn save_then_load_round_trips() {
         let dir = std::env::temp_dir().join(format!("sp_store_{}", std::process::id()));
         let path = dir.join("registry.json");
         let mut registry = Registry::default();
-        registry.experts.insert(
+        registry.specialists.insert(
             "x".into(),
-            Expert {
+            Specialist {
                 name: "x".into(),
                 provider: "p".into(),
                 model: "m".into(),
