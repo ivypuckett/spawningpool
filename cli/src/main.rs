@@ -222,6 +222,8 @@ fn empty_state() -> String {
         "  LM Studio (local, OpenAI-compatible):",
         "      sp define provider lmstudio --api openai-completions \\",
         "        --base-url http://localhost:1234/v1",
+        "      (add --constrained-decoding if the server supports it, for a hard",
+        "       guarantee on a specialist's forced tool call.)",
         "",
         "Then run `sp` again for the next step.",
     ]

@@ -31,7 +31,8 @@ sp run --specialist name --prompt 'prompt'
 sp define provider name \
   --api anthropic|openai \
   --base-url URL \
-  --api-key-env ENV          # optional
+  --api-key-env ENV \        # optional
+  --constrained-decoding     # optional; declare the endpoint supports it (see below)
 
 # define a model — keyed by its API id, against a provider, with its limits
 sp define model id \
@@ -121,6 +122,20 @@ A specialist gets tools one of two ways, and the two are mutually exclusive:
   A forced tool call is incompatible with reasoning (Anthropic rejects the pair),
   so a constrained specialist must keep `--reasoning off`; `sp define specialist`
   rejects the combination up front.
+
+How the forced call is realized depends on the provider, because forcing isn't
+uniform across endpoints that share a wire protocol:
+
+- A provider defined with `--constrained-decoding` uses true **constrained
+  decoding**: the model is grammar-constrained (via `response_format` built from
+  the tool's parameter schema) so its output is guaranteed schema-valid, and the
+  harness synthesizes the tool call from it. Streaming is disabled for such a run,
+  since its only output is the tool's arguments.
+- Otherwise the call is forced with the portable `tool_choice: "required"`, which
+  every OpenAI-compatible server and Anthropic accept. (`--constrained-decoding`
+  is a capability you assert per provider — it can't be inferred, since two
+  `openai-completions` endpoints can differ. Anthropic ignores the flag and uses
+  its native forced tool choice either way.)
 
 A script's non-zero exit is fed back to the model as a tool error (agentic) or
 surfaced (constrained).

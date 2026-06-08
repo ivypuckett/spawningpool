@@ -91,6 +91,19 @@ sp define specialist sentiment --provider anthropic --model claude-opus-4-8 \
 sp run --specialist sentiment --prompt 'I absolutely love this!'
 ```
 
+The forced call works on any provider out of the box (it uses
+`tool_choice: "required"`). If the provider's endpoint supports grammar-constrained
+output — many local OpenAI-compatible servers like LM Studio do — define it with
+`--constrained-decoding` to get a hard, token-level guarantee that the arguments
+match the tool's schema:
+
+```sh
+sp define provider lmstudio --api openai --base-url http://localhost:1234/v1 \
+  --constrained-decoding
+```
+
+See [CLI reference → define provider](cli.md#provider) for the details.
+
 ## Chaining specialists
 
 There is no built-in chain abstraction — by design. A specialist's stdout is
