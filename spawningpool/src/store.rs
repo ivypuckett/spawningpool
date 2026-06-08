@@ -2,17 +2,13 @@
 //!
 //! The location is `$SPAWNINGPOOL_HOME/registry.json` (default
 //! `~/.spawningpool/registry.json`), or the exact path in `$SPAWNINGPOOL_REGISTRY`
-//! when set. A missing file loads as an empty registry, so the first `define`
-//! creates it.
+//! when set. A missing file loads as an empty registry, so the first write
+//! creates it. Both `sp` and any other front-end share this module so they read
+//! and write the registry through one path-resolution policy.
 
 use std::path::{Path, PathBuf};
 
-use spawningpool::Registry;
-
-/// Serializes tests that mutate process-wide environment variables, since the
-/// registry path is resolved from them and tests otherwise run in parallel.
-#[cfg(test)]
-pub(crate) static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+use crate::Registry;
 
 /// The resolved path to the registry file.
 pub fn registry_path() -> PathBuf {
@@ -29,15 +25,18 @@ pub fn registry_path() -> PathBuf {
     dir.join("registry.json")
 }
 
+/// Load the registry from its resolved path. A missing file is an empty registry.
 pub fn load() -> Result<Registry, String> {
     load_from(&registry_path())
 }
 
+/// Save the registry to its resolved path.
 pub fn save(registry: &Registry) -> Result<(), String> {
     save_to(&registry_path(), registry)
 }
 
-fn load_from(path: &Path) -> Result<Registry, String> {
+/// Load the registry from an explicit path. A missing file is an empty registry.
+pub fn load_from(path: &Path) -> Result<Registry, String> {
     match std::fs::read_to_string(path) {
         Ok(contents) => serde_json::from_str(&contents)
             .map_err(|e| format!("failed to parse {}: {e}", path.display())),
@@ -46,7 +45,12 @@ fn load_from(path: &Path) -> Result<Registry, String> {
     }
 }
 
-fn save_to(path: &Path, registry: &Registry) -> Result<(), String> {
+/// Save the registry to an explicit path, creating parent directories as needed.
+///
+/// The write is atomic: the JSON goes to a sibling temp file that is then renamed
+/// over the target, so a crash mid-write (or a second writer, once a UI exists)
+/// can't leave a half-written, unparseable registry behind.
+pub fn save_to(path: &Path, registry: &Registry) -> Result<(), String> {
     if let Some(parent) = path.parent() {
         if !parent.as_os_str().is_empty() {
             std::fs::create_dir_all(parent)
@@ -54,14 +58,33 @@ fn save_to(path: &Path, registry: &Registry) -> Result<(), String> {
         }
     }
     let json = serde_json::to_string_pretty(registry).map_err(|e| e.to_string())?;
-    std::fs::write(path, json).map_err(|e| format!("failed to write {}: {e}", path.display()))
+
+    let file_name = path
+        .file_name()
+        .ok_or_else(|| format!("invalid registry path {}", path.display()))?;
+    // A per-process temp name in the target's directory keeps the rename on the
+    // same filesystem (so it's atomic) without two processes clobbering one temp.
+    let tmp = path.with_file_name(format!(
+        ".{}.tmp.{}",
+        file_name.to_string_lossy(),
+        std::process::id()
+    ));
+    std::fs::write(&tmp, json).map_err(|e| format!("failed to write {}: {e}", tmp.display()))?;
+    std::fs::rename(&tmp, path).map_err(|e| {
+        let _ = std::fs::remove_file(&tmp);
+        format!("failed to write {}: {e}", path.display())
+    })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use spawningpool::ai::Reasoning;
-    use spawningpool::Specialist;
+    use crate::ai::Reasoning;
+    use crate::Specialist;
+
+    /// Serializes tests that mutate process-wide environment variables, since the
+    /// registry path is resolved from them and tests otherwise run in parallel.
+    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
     #[test]
     fn save_then_load_round_trips() {
@@ -86,6 +109,36 @@ mod tests {
         let back = load_from(&path).unwrap();
         std::fs::remove_dir_all(&dir).ok();
         assert_eq!(registry, back);
+    }
+
+    #[test]
+    fn save_to_replaces_existing_atomically() {
+        // A second save overwrites the first cleanly, leaving no temp file behind.
+        let dir = std::env::temp_dir().join(format!("sp_store_atomic_{}", std::process::id()));
+        let path = dir.join("registry.json");
+
+        save_to(&path, &Registry::default()).unwrap();
+        let mut registry = Registry::default();
+        registry.providers.insert(
+            "anthropic".into(),
+            crate::ProviderDef {
+                name: "anthropic".into(),
+                api: crate::ai::Api::AnthropicMessages,
+                base_url: "https://api.anthropic.com".into(),
+                api_key_env: None,
+            },
+        );
+        save_to(&path, &registry).unwrap();
+
+        assert_eq!(load_from(&path).unwrap(), registry);
+        // The temp sibling was renamed away, not left lying around.
+        let leftovers: Vec<_> = std::fs::read_dir(&dir)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .filter(|e| e.file_name().to_string_lossy().contains(".tmp."))
+            .collect();
+        std::fs::remove_dir_all(&dir).ok();
+        assert!(leftovers.is_empty());
     }
 
     #[test]
