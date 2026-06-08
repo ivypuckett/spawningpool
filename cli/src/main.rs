@@ -1,5 +1,5 @@
-//! `sp` — the spawningpool CLI. Defines providers, models, experts, and tools
-//! into a persisted [`Registry`], and runs an expert against a prompt.
+//! `sp` — the spawningpool CLI. Defines providers, models, specialists, and tools
+//! into a persisted [`Registry`], and runs a specialist against a prompt.
 
 mod store;
 
@@ -8,7 +8,7 @@ use std::path::PathBuf;
 use clap::{Parser, Subcommand};
 use futures::StreamExt;
 use spawningpool::ai::{Api, Client, ContentBlock, Reasoning, StreamEvent};
-use spawningpool::{Expert, ModelDef, ProviderDef, ToolDef};
+use spawningpool::{ModelDef, ProviderDef, Specialist, ToolDef};
 use std::io::Write;
 
 #[derive(Parser)]
@@ -20,11 +20,11 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
-    /// Run an expert against a prompt.
+    /// Run a specialist against a prompt.
     #[command(alias = "spawn")]
     Run {
         #[arg(long)]
-        expert: String,
+        specialist: String,
         #[arg(long)]
         prompt: String,
     },
@@ -47,7 +47,7 @@ enum Command {
 
 #[derive(Subcommand)]
 enum ListKind {
-    Experts,
+    Specialists,
     Providers,
     Models,
     Tools,
@@ -78,8 +78,8 @@ enum DefineEntity {
         #[arg(long)]
         context_window: u32,
     },
-    /// Define an expert template.
-    Expert {
+    /// Define a specialist template.
+    Specialist {
         name: String,
         #[arg(long)]
         provider: String,
@@ -90,12 +90,12 @@ enum DefineEntity {
         /// Comma-separated tool names.
         #[arg(long)]
         tools: Option<String>,
-        /// A tool the expert is forced to call (constrained decoding).
+        /// A tool the specialist is forced to call (constrained decoding).
         #[arg(long)]
         constraint: Option<String>,
         #[arg(long, default_value = "off")]
         reasoning: String,
-        /// Stream the response incrementally when this expert runs.
+        /// Stream the response incrementally when this specialist runs.
         #[arg(long)]
         stream: bool,
     },
@@ -112,7 +112,7 @@ enum DefineEntity {
 
 #[derive(Subcommand)]
 enum DeleteEntity {
-    Expert { name: String },
+    Specialist { name: String },
     Provider { name: String },
     Model { name: String },
     Tool { name: String },
@@ -128,27 +128,27 @@ async fn main() {
 
 async fn run(cli: Cli) -> Result<(), String> {
     match cli.command {
-        Command::Run { expert, prompt } => run_expert(&expert, &prompt).await,
+        Command::Run { specialist, prompt } => run_specialist(&specialist, &prompt).await,
         Command::List { kind } => list(kind),
         Command::Define { entity } => define(entity),
         Command::Delete { entity } => delete(entity),
     }
 }
 
-async fn run_expert(name: &str, prompt: &str) -> Result<(), String> {
+async fn run_specialist(name: &str, prompt: &str) -> Result<(), String> {
     let registry = store::load()?;
-    let expert = registry
-        .experts
+    let specialist = registry
+        .specialists
         .get(name)
-        .ok_or_else(|| format!("unknown expert: {name}"))?;
+        .ok_or_else(|| format!("unknown specialist: {name}"))?;
 
-    let model = registry.resolve_model(expert)?;
-    let ctx = registry.build_context(expert, prompt)?;
-    let mut opts = expert.complete_options();
+    let model = registry.resolve_model(specialist)?;
+    let ctx = registry.build_context(specialist, prompt)?;
+    let mut opts = specialist.complete_options();
     // Source the API key from the provider's configured env var, if any.
     if let Some(env) = registry
         .providers
-        .get(&expert.provider)
+        .get(&specialist.provider)
         .and_then(|p| p.api_key_env.as_ref())
     {
         if let Ok(key) = std::env::var(env) {
@@ -157,7 +157,7 @@ async fn run_expert(name: &str, prompt: &str) -> Result<(), String> {
     }
 
     let client = Client::new();
-    if expert.stream {
+    if specialist.stream {
         stream_completion(&client, &model, &ctx, &opts).await
     } else {
         await_completion(&client, &model, &ctx, &opts).await
@@ -235,7 +235,7 @@ async fn stream_completion(
 fn list(kind: ListKind) -> Result<(), String> {
     let registry = store::load()?;
     let mut names: Vec<&String> = match kind {
-        ListKind::Experts => registry.experts.keys().collect(),
+        ListKind::Specialists => registry.specialists.keys().collect(),
         ListKind::Providers => registry.providers.keys().collect(),
         ListKind::Models => registry.models.keys().collect(),
         ListKind::Tools => registry.tools.keys().collect(),
@@ -282,7 +282,7 @@ fn define(entity: DefineEntity) -> Result<(), String> {
             registry.models.insert(id.clone(), def);
             format!("model {id}")
         }
-        DefineEntity::Expert {
+        DefineEntity::Specialist {
             name,
             provider,
             model,
@@ -292,7 +292,7 @@ fn define(entity: DefineEntity) -> Result<(), String> {
             reasoning,
             stream,
         } => {
-            let def = Expert {
+            let def = Specialist {
                 name: name.clone(),
                 provider,
                 model,
@@ -302,8 +302,8 @@ fn define(entity: DefineEntity) -> Result<(), String> {
                 reasoning: parse_reasoning(&reasoning)?,
                 stream,
             };
-            registry.experts.insert(name.clone(), def);
-            format!("expert {name}")
+            registry.specialists.insert(name.clone(), def);
+            format!("specialist {name}")
         }
         DefineEntity::Tool {
             name,
@@ -333,9 +333,9 @@ fn define(entity: DefineEntity) -> Result<(), String> {
 fn delete(entity: DeleteEntity) -> Result<(), String> {
     let mut registry = store::load()?;
     let (removed, what) = match entity {
-        DeleteEntity::Expert { name } => (
-            registry.experts.remove(&name).is_some(),
-            format!("expert {name}"),
+        DeleteEntity::Specialist { name } => (
+            registry.specialists.remove(&name).is_some(),
+            format!("specialist {name}"),
         ),
         DeleteEntity::Provider { name } => (
             registry.providers.remove(&name).is_some(),
