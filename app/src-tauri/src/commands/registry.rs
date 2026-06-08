@@ -35,9 +35,99 @@ pub fn list_entities() -> Result<RegistrySnapshot, String> {
     load_snapshot()
 }
 
+/// Return one entity's full definition as JSON, or an error if it doesn't exist.
+/// `kind` is one of "provider" | "model" | "specialist" | "tool". Mirrors `sp show`.
+#[tauri::command]
+pub fn show_entity(kind: String, name: String) -> Result<serde_json::Value, String> {
+    let registry = store::load()?;
+    match kind.as_str() {
+        "provider" => match registry.providers.get(&name) {
+            Some(def) => serde_json::to_value(def).map_err(|e| e.to_string()),
+            None => Err(format!("no such {kind} {name}")),
+        },
+        "model" => match registry.models.get(&name) {
+            Some(def) => serde_json::to_value(def).map_err(|e| e.to_string()),
+            None => Err(format!("no such {kind} {name}")),
+        },
+        "specialist" => match registry.specialists.get(&name) {
+            Some(def) => serde_json::to_value(def).map_err(|e| e.to_string()),
+            None => Err(format!("no such {kind} {name}")),
+        },
+        "tool" => tools::resolve(&store::tools_dir(), &name)
+            .and_then(|def| serde_json::to_value(def).map_err(|e| e.to_string())),
+        _ => Err(format!("unknown entity kind: {kind}")),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn show_entity_returns_provider_definition() {
+        let _g = crate::test_support::env_lock();
+        let _tmp = crate::test_support::point_registry_at_temp();
+
+        let mut reg = spawningpool::Registry::default();
+        reg.providers.insert(
+            "anthropic".into(),
+            spawningpool::ProviderDef {
+                name: "anthropic".into(),
+                api: spawningpool::ai::Api::AnthropicMessages,
+                base_url: "https://api.anthropic.com".into(),
+                api_key_env: None,
+                constrained_decoding: false,
+            },
+        );
+        spawningpool::store::save(&reg).unwrap();
+
+        let result = show_entity("provider".into(), "anthropic".into()).unwrap();
+        assert_eq!(result["name"], "anthropic");
+    }
+
+    #[test]
+    fn show_entity_returns_error_for_missing_provider() {
+        let _g = crate::test_support::env_lock();
+        let _tmp = crate::test_support::point_registry_at_temp();
+
+        let err = show_entity("provider".into(), "ghost".into()).unwrap_err();
+        assert!(err.contains("no such provider ghost"), "got: {err}");
+    }
+
+    #[test]
+    fn show_entity_returns_error_for_unknown_kind() {
+        let _g = crate::test_support::env_lock();
+        let _tmp = crate::test_support::point_registry_at_temp();
+
+        let err = show_entity("bogus".into(), "x".into()).unwrap_err();
+        assert!(err.contains("unknown entity kind"), "got: {err}");
+    }
+
+    #[test]
+    fn show_entity_returns_tool_definition() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let _g = crate::test_support::env_lock();
+        let _tmp = crate::test_support::point_registry_at_temp();
+
+        let tools_dir = spawningpool::store::tools_dir();
+        std::fs::create_dir_all(&tools_dir).unwrap();
+        let script_path = tools_dir.join("ping");
+        std::fs::write(
+            &script_path,
+            "#!/bin/sh\n# desc: Ping\n# params: HOST\necho hi\n",
+        )
+        .unwrap();
+        std::fs::set_permissions(&script_path, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+        let result = show_entity("tool".into(), "ping".into()).unwrap();
+        assert_eq!(result["description"], "Ping");
+        let params = result["params"].as_array().unwrap();
+        assert!(
+            params.iter().any(|p| p.as_str() == Some("HOST")),
+            "params should contain HOST, got: {params:?}"
+        );
+    }
 
     #[test]
     fn list_entities_reads_an_empty_registry() {
