@@ -9,6 +9,11 @@ use std::path::{Path, PathBuf};
 
 use spawningpool::Registry;
 
+/// Serializes tests that mutate process-wide environment variables, since the
+/// registry path is resolved from them and tests otherwise run in parallel.
+#[cfg(test)]
+pub(crate) static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 /// The resolved path to the registry file.
 pub fn registry_path() -> PathBuf {
     if let Some(path) = std::env::var_os("SPAWNINGPOOL_REGISTRY") {
@@ -87,5 +92,50 @@ mod tests {
     fn missing_file_loads_empty() {
         let path = std::env::temp_dir().join("sp_absent_dir_xyz/registry.json");
         assert_eq!(load_from(&path).unwrap(), Registry::default());
+    }
+
+    fn restore(key: &str, value: Option<std::ffi::OsString>) {
+        match value {
+            Some(v) => std::env::set_var(key, v),
+            None => std::env::remove_var(key),
+        }
+    }
+
+    #[test]
+    fn registry_path_follows_env_precedence() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let saved = (
+            std::env::var_os("SPAWNINGPOOL_REGISTRY"),
+            std::env::var_os("SPAWNINGPOOL_HOME"),
+            std::env::var_os("HOME"),
+        );
+
+        // An explicit registry path wins over everything else.
+        std::env::set_var("SPAWNINGPOOL_REGISTRY", "/tmp/explicit.json");
+        std::env::set_var("SPAWNINGPOOL_HOME", "/tmp/home");
+        std::env::set_var("HOME", "/tmp/user");
+        assert_eq!(registry_path(), PathBuf::from("/tmp/explicit.json"));
+
+        // Then SPAWNINGPOOL_HOME: registry.json directly under it.
+        std::env::remove_var("SPAWNINGPOOL_REGISTRY");
+        assert_eq!(registry_path(), PathBuf::from("/tmp/home/registry.json"));
+
+        // Then HOME: ~/.spawningpool/registry.json.
+        std::env::remove_var("SPAWNINGPOOL_HOME");
+        assert_eq!(
+            registry_path(),
+            PathBuf::from("/tmp/user/.spawningpool/registry.json")
+        );
+
+        // Nothing set: a relative .spawningpool/registry.json.
+        std::env::remove_var("HOME");
+        assert_eq!(
+            registry_path(),
+            PathBuf::from(".spawningpool/registry.json")
+        );
+
+        restore("SPAWNINGPOOL_REGISTRY", saved.0);
+        restore("SPAWNINGPOOL_HOME", saved.1);
+        restore("HOME", saved.2);
     }
 }

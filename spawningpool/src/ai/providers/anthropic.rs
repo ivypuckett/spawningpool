@@ -570,6 +570,55 @@ mod tests {
     }
 
     #[test]
+    fn tool_call_maps_to_tool_use_and_thinking_is_dropped() {
+        let wire = to_wire_message(&Message {
+            role: Role::Assistant,
+            content: vec![
+                ContentBlock::Thinking {
+                    thinking: "internal".into(),
+                },
+                ContentBlock::ToolCall {
+                    id: "toolu_1".into(),
+                    name: "get_weather".into(),
+                    arguments: serde_json::json!({ "city": "Paris" }),
+                },
+            ],
+        });
+        let value = serde_json::to_value(&wire).unwrap();
+        assert_eq!(value["role"], "assistant");
+        // The thinking block is filtered out; only the tool_use survives.
+        assert_eq!(value["content"].as_array().unwrap().len(), 1);
+        assert_eq!(value["content"][0]["type"], "tool_use");
+        assert_eq!(value["content"][0]["id"], "toolu_1");
+        assert_eq!(value["content"][0]["name"], "get_weather");
+        assert_eq!(value["content"][0]["input"]["city"], "Paris");
+    }
+
+    #[test]
+    fn low_and_medium_reasoning_map_to_adaptive_thinking_and_effort() {
+        for (level, effort) in [(Reasoning::Low, "low"), (Reasoning::Medium, "medium")] {
+            let opts = CompleteOptions {
+                reasoning: level,
+                ..Default::default()
+            };
+            let body = build_request(&model(), &Context::default(), &opts, false);
+            assert_eq!(body["thinking"]["type"], "adaptive");
+            assert_eq!(body["output_config"]["effort"], effort);
+        }
+    }
+
+    #[test]
+    fn stop_reasons_map_to_unified_variants() {
+        assert_eq!(map_stop_reason(Some("end_turn")), StopReason::Stop);
+        assert_eq!(map_stop_reason(Some("stop_sequence")), StopReason::Stop);
+        assert_eq!(map_stop_reason(Some("max_tokens")), StopReason::Length);
+        assert_eq!(map_stop_reason(Some("tool_use")), StopReason::ToolUse);
+        assert_eq!(map_stop_reason(Some("refusal")), StopReason::Refusal);
+        assert_eq!(map_stop_reason(Some("something_new")), StopReason::Error);
+        assert_eq!(map_stop_reason(None), StopReason::Error);
+    }
+
+    #[test]
     fn stream_accumulator_assembles_message_and_usage() {
         let mut acc = StreamAccumulator::default();
         let events: Vec<serde_json::Value> = vec![

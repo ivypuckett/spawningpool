@@ -485,4 +485,182 @@ mod tests {
         // A non-object (e.g. malformed args) yields no variables.
         assert!(args_to_vars(&serde_json::json!("oops")).is_empty());
     }
+
+    #[test]
+    fn args_to_vars_handles_varied_json_value_types() {
+        let vars = args_to_vars(&serde_json::json!({
+            "s": "txt",
+            "n": 1.5,
+            "b": true,
+            "nil": null,
+            "arr": [1, 2],
+            "obj": { "k": "v" },
+        }));
+        assert_eq!(vars.get("s"), Some(&"txt".to_string()));
+        assert_eq!(vars.get("n"), Some(&"1.5".to_string()));
+        assert_eq!(vars.get("b"), Some(&"true".to_string()));
+        assert_eq!(vars.get("nil"), Some(&"null".to_string()));
+        assert_eq!(vars.get("arr"), Some(&"[1,2]".to_string()));
+        assert_eq!(vars.get("obj"), Some(&r#"{"k":"v"}"#.to_string()));
+    }
+
+    fn write_script(body: &str) -> PathBuf {
+        use std::os::unix::fs::PermissionsExt;
+        let path = std::env::temp_dir().join(format!(
+            "sp_cli_tool_{}_{}.sh",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::write(&path, body).unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        path
+    }
+
+    fn registry_with_tool(name: &str, script: PathBuf) -> Registry {
+        let mut registry = Registry::default();
+        registry.tools.insert(
+            name.to_string(),
+            ToolDef {
+                name: name.to_string(),
+                script,
+                description: String::new(),
+                params: vec![],
+            },
+        );
+        registry
+    }
+
+    #[test]
+    fn run_tool_call_returns_result_on_success() {
+        let script = write_script("#!/bin/sh\necho \"hi $NAME\"\n");
+        let registry = registry_with_tool("greet", script.clone());
+        let block = run_tool_call(
+            &registry,
+            "id1",
+            "greet",
+            &serde_json::json!({ "NAME": "world" }),
+        );
+        std::fs::remove_file(&script).ok();
+        match block {
+            ContentBlock::ToolResult {
+                tool_call_id,
+                content,
+                is_error,
+            } => {
+                assert_eq!(tool_call_id, "id1");
+                assert!(!is_error);
+                assert!(content.contains("hi world"));
+            }
+            other => panic!("expected ToolResult, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn run_tool_call_returns_error_on_nonzero_exit() {
+        let script = write_script("#!/bin/sh\necho boom >&2\nexit 1\n");
+        let registry = registry_with_tool("fail", script.clone());
+        let block = run_tool_call(&registry, "id2", "fail", &serde_json::json!({}));
+        std::fs::remove_file(&script).ok();
+        match block {
+            ContentBlock::ToolResult {
+                content, is_error, ..
+            } => {
+                assert!(is_error);
+                assert!(content.contains("boom"));
+            }
+            other => panic!("expected ToolResult error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn run_tool_call_reports_unknown_tool_as_error() {
+        let registry = Registry::default();
+        let block = run_tool_call(&registry, "id3", "ghost", &serde_json::json!({}));
+        match block {
+            ContentBlock::ToolResult {
+                tool_call_id,
+                content,
+                is_error,
+            } => {
+                assert_eq!(tool_call_id, "id3");
+                assert!(is_error);
+                assert!(content.contains("unknown tool"));
+            }
+            other => panic!("expected ToolResult error, got {other:?}"),
+        }
+    }
+
+    fn restore_registry_env(saved: Option<std::ffi::OsString>) {
+        match saved {
+            Some(v) => std::env::set_var("SPAWNINGPOOL_REGISTRY", v),
+            None => std::env::remove_var("SPAWNINGPOOL_REGISTRY"),
+        }
+    }
+
+    #[test]
+    fn define_list_and_delete_round_trip_through_the_store() {
+        let _guard = store::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let saved = std::env::var_os("SPAWNINGPOOL_REGISTRY");
+        let dir = std::env::temp_dir().join(format!("sp_cli_define_{}", std::process::id()));
+        let path = dir.join("registry.json");
+        std::env::set_var("SPAWNINGPOOL_REGISTRY", &path);
+
+        define(DefineEntity::Provider {
+            name: "anthropic".into(),
+            api: "anthropic-messages".into(),
+            base_url: "https://api.anthropic.com".into(),
+            api_key_env: Some("ANTHROPIC_API_KEY".into()),
+        })
+        .unwrap();
+
+        // The provider is persisted and reloads from disk.
+        assert!(store::load().unwrap().providers.contains_key("anthropic"));
+        // Listing succeeds against the populated registry.
+        list(ListKind::Providers).unwrap();
+
+        // Deleting it removes it.
+        delete(DeleteEntity::Provider {
+            name: "anthropic".into(),
+        })
+        .unwrap();
+        assert!(!store::load().unwrap().providers.contains_key("anthropic"));
+
+        // Deleting something absent is an error.
+        let err = delete(DeleteEntity::Provider {
+            name: "ghost".into(),
+        })
+        .unwrap_err();
+        assert!(err.contains("no such"));
+
+        std::fs::remove_dir_all(&dir).ok();
+        restore_registry_env(saved);
+    }
+
+    #[test]
+    fn define_specialist_rejects_tools_and_constraint_together() {
+        let _guard = store::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let saved = std::env::var_os("SPAWNINGPOOL_REGISTRY");
+        let dir = std::env::temp_dir().join(format!("sp_cli_val_{}", std::process::id()));
+        let path = dir.join("registry.json");
+        std::env::set_var("SPAWNINGPOOL_REGISTRY", &path);
+
+        let err = define(DefineEntity::Specialist {
+            name: "bad".into(),
+            provider: "p".into(),
+            model: "m".into(),
+            system_prompt: "s".into(),
+            tools: Some("a,b".into()),
+            constraint: Some("a".into()),
+            reasoning: "off".into(),
+            stream: false,
+        })
+        .unwrap_err();
+        assert!(err.contains("tools and a constraint"));
+
+        std::fs::remove_dir_all(&dir).ok();
+        restore_registry_env(saved);
+    }
 }
