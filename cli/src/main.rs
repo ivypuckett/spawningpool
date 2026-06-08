@@ -4,13 +4,10 @@
 use std::path::{Path, PathBuf};
 
 use clap::{Parser, Subcommand};
-use futures::StreamExt;
-use spawningpool::ai::{
-    Api, Client, CompleteOptions, ContentBlock, Context, Message, Model, Reasoning, Role,
-    StreamEvent, Usage,
-};
+use spawningpool::ai::{Api, Client, Reasoning};
 use spawningpool::{
-    EntityKind, ModelDef, ProviderDef, Referrer, Registry, ScriptError, Specialist, ToolDef,
+    EntityKind, ModelDef, ProviderDef, Referrer, Registry, RunEvent, ScriptError, Specialist,
+    ToolDef,
 };
 use std::collections::HashMap;
 use std::io::Write;
@@ -331,10 +328,6 @@ fn unset_key_warnings(registry: &Registry, is_set: impl Fn(&str) -> bool) -> Vec
         .collect()
 }
 
-/// Cap on agentic turns, so a specialist that keeps calling tools without ever
-/// settling on an answer terminates instead of looping forever.
-const MAX_TURNS: usize = 16;
-
 async fn run_specialist(name: &str, prompt: &str) -> Result<(), String> {
     let registry = spawningpool::store::load()?;
     let specialist = registry
@@ -342,8 +335,6 @@ async fn run_specialist(name: &str, prompt: &str) -> Result<(), String> {
         .get(name)
         .ok_or_else(|| format!("unknown specialist: {name}"))?;
 
-    let model = registry.resolve_model(specialist)?;
-    let mut ctx = registry.build_context(specialist, prompt)?;
     let mut opts = specialist.complete_options();
     // Source the API key from the provider's configured env var, if any.
     if let Some(env) = registry
@@ -357,159 +348,28 @@ async fn run_specialist(name: &str, prompt: &str) -> Result<(), String> {
     }
 
     let client = Client::new();
-    // A constrained specialist makes a single forced call; a tools specialist
-    // runs agentically until it stops calling tools.
-    let agentic = specialist.constraint.is_none();
-
-    for _ in 0..MAX_TURNS {
-        let (message, usage) = one_turn(&client, &model, &ctx, &opts, specialist.stream).await?;
-        eprintln!("[usage] {} in / {} out", usage.input, usage.output);
-
-        let calls: Vec<(String, String, serde_json::Value)> = message
-            .content
-            .iter()
-            .filter_map(|block| match block {
-                ContentBlock::ToolCall {
-                    id,
-                    name,
-                    arguments,
-                } => Some((id.clone(), name.clone(), arguments.clone())),
-                _ => None,
-            })
-            .collect();
-
-        // No tool calls means the model produced its final answer.
-        if calls.is_empty() {
-            return Ok(());
+    // Render the run to the terminal: assistant text on stdout (streamed live),
+    // usage and tool failures on stderr, tool output on stdout. `printed_text`
+    // tracks streamed deltas so a trailing newline lands before the usage line.
+    let mut printed_text = false;
+    let mut render = |event: RunEvent<'_>| match event {
+        RunEvent::TextDelta(delta) => {
+            print!("{delta}");
+            std::io::stdout().flush().ok();
+            printed_text = true;
         }
-
-        let mut results = Vec::with_capacity(calls.len());
-        for (id, tool_name, arguments) in &calls {
-            results.push(run_tool_call(&registry, id, tool_name, arguments));
-        }
-
-        // The constraint guaranteed exactly one call; once executed, we're done.
-        if !agentic {
-            return Ok(());
-        }
-
-        // Feed the assistant's turn and the tool results back, then loop.
-        ctx.messages.push(message);
-        ctx.messages.push(Message {
-            role: Role::User,
-            content: results,
-        });
-    }
-
-    Err(format!(
-        "specialist '{name}' did not finish within {MAX_TURNS} turns.\n  \
-         It kept calling tools without settling on an answer — inspect the tool \
-         outputs above, tighten its system prompt, or reduce the tools it can call."
-    ))
-}
-
-/// Run one model turn, printing any assistant text (streamed live when the
-/// specialist streams), and return the fully assembled message plus usage.
-async fn one_turn(
-    client: &Client,
-    model: &Model,
-    ctx: &Context,
-    opts: &CompleteOptions,
-    stream: bool,
-) -> Result<(Message, Usage), String> {
-    if stream {
-        let mut events = client
-            .stream(model, ctx, opts)
-            .await
-            .map_err(|e| e.to_string())?;
-        let mut stdout = std::io::stdout();
-        let mut printed_text = false;
-        while let Some(event) = events.next().await {
-            match event.map_err(|e| e.to_string())? {
-                StreamEvent::TextDelta { delta, .. } => {
-                    print!("{delta}");
-                    stdout.flush().ok();
-                    printed_text = true;
-                }
-                StreamEvent::Done { usage, message, .. } => {
-                    if printed_text {
-                        println!();
-                    }
-                    return Ok((message, usage));
-                }
-                StreamEvent::ThinkingDelta { .. } | StreamEvent::ToolCallDelta { .. } => {}
+        RunEvent::Text(text) => println!("{text}"),
+        RunEvent::Usage(usage) => {
+            if std::mem::take(&mut printed_text) {
+                println!();
             }
+            eprintln!("[usage] {} in / {} out", usage.input, usage.output);
         }
-        Err("stream ended without a final event".to_string())
-    } else {
-        let completion = client
-            .complete(model, ctx, opts)
-            .await
-            .map_err(|e| e.to_string())?;
-        for block in &completion.message.content {
-            if let ContentBlock::Text { text } = block {
-                println!("{text}");
-            }
-        }
-        Ok((completion.message, completion.usage))
-    }
-}
-
-/// Execute one tool call by running its backing script, print the outcome, and
-/// return the [`ContentBlock::ToolResult`] to feed back to the model. A failed
-/// or unknown tool becomes a tool error so the model can react.
-fn run_tool_call(
-    registry: &Registry,
-    id: &str,
-    tool_name: &str,
-    arguments: &serde_json::Value,
-) -> ContentBlock {
-    let tool = match registry.tools.get(tool_name) {
-        Some(tool) => tool,
-        None => {
-            let msg = format!("unknown tool: {tool_name}");
-            eprintln!("[tool {tool_name}] {msg}");
-            return ContentBlock::tool_error(id, msg);
-        }
+        RunEvent::ToolRan { name, output, .. } => println!("[tool {name}]\n{output}"),
+        RunEvent::ToolFailed { name, message } => eprintln!("[tool {name}] {message}"),
     };
-
-    let vars = args_to_vars(arguments);
-    match spawningpool::run_script(&tool.script, &vars) {
-        Ok(run) => {
-            println!("[tool {tool_name}]\n{}", run.output);
-            if run.success {
-                ContentBlock::tool_result(id, run.output)
-            } else {
-                ContentBlock::tool_error(id, run.output)
-            }
-        }
-        Err(e) => {
-            let path = tool.script.display();
-            let msg = format!(
-                "tool '{tool_name}' could not run its script {path}: {e}\n  \
-                 Ensure it exists, is executable (chmod +x {path}), and has a shebang (e.g. #!/bin/sh)."
-            );
-            eprintln!("[tool {tool_name}] {msg}");
-            ContentBlock::tool_error(id, msg)
-        }
-    }
-}
-
-/// Lower a tool call's JSON arguments into the `KEY=value` variables a task
-/// expects. Non-string values are stringified via their JSON form.
-fn args_to_vars(arguments: &serde_json::Value) -> HashMap<String, String> {
-    arguments
-        .as_object()
-        .into_iter()
-        .flatten()
-        .map(|(key, value)| {
-            let value = match value {
-                serde_json::Value::String(s) => s.clone(),
-                other => other.to_string(),
-            };
-            (key.clone(), value)
-        })
-        .collect()
+    spawningpool::run::run_specialist(&client, &registry, specialist, prompt, &opts, &mut render)
+        .await
 }
 
 async fn list(kind: ListKind) -> Result<(), String> {
@@ -925,35 +785,6 @@ mod tests {
         assert!(parse_reasoning("ultra").is_err());
     }
 
-    #[test]
-    fn args_to_vars_stringifies_values_and_ignores_non_objects() {
-        let vars = args_to_vars(&serde_json::json!({ "env": "prod", "count": 3 }));
-        assert_eq!(vars.get("env"), Some(&"prod".to_string()));
-        // Non-string values fall back to their JSON form.
-        assert_eq!(vars.get("count"), Some(&"3".to_string()));
-
-        // A non-object (e.g. malformed args) yields no variables.
-        assert!(args_to_vars(&serde_json::json!("oops")).is_empty());
-    }
-
-    #[test]
-    fn args_to_vars_handles_varied_json_value_types() {
-        let vars = args_to_vars(&serde_json::json!({
-            "s": "txt",
-            "n": 1.5,
-            "b": true,
-            "nil": null,
-            "arr": [1, 2],
-            "obj": { "k": "v" },
-        }));
-        assert_eq!(vars.get("s"), Some(&"txt".to_string()));
-        assert_eq!(vars.get("n"), Some(&"1.5".to_string()));
-        assert_eq!(vars.get("b"), Some(&"true".to_string()));
-        assert_eq!(vars.get("nil"), Some(&"null".to_string()));
-        assert_eq!(vars.get("arr"), Some(&"[1,2]".to_string()));
-        assert_eq!(vars.get("obj"), Some(&r#"{"k":"v"}"#.to_string()));
-    }
-
     fn write_script(body: &str) -> PathBuf {
         use std::os::unix::fs::PermissionsExt;
         let path = std::env::temp_dir().join(format!(
@@ -967,80 +798,6 @@ mod tests {
         std::fs::write(&path, body).unwrap();
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
         path
-    }
-
-    fn registry_with_tool(name: &str, script: PathBuf) -> Registry {
-        let mut registry = Registry::default();
-        registry.tools.insert(
-            name.to_string(),
-            ToolDef {
-                name: name.to_string(),
-                script,
-                description: String::new(),
-                params: vec![],
-            },
-        );
-        registry
-    }
-
-    #[test]
-    fn run_tool_call_returns_result_on_success() {
-        let script = write_script("#!/bin/sh\necho \"hi $NAME\"\n");
-        let registry = registry_with_tool("greet", script.clone());
-        let block = run_tool_call(
-            &registry,
-            "id1",
-            "greet",
-            &serde_json::json!({ "NAME": "world" }),
-        );
-        std::fs::remove_file(&script).ok();
-        match block {
-            ContentBlock::ToolResult {
-                tool_call_id,
-                content,
-                is_error,
-            } => {
-                assert_eq!(tool_call_id, "id1");
-                assert!(!is_error);
-                assert!(content.contains("hi world"));
-            }
-            other => panic!("expected ToolResult, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn run_tool_call_returns_error_on_nonzero_exit() {
-        let script = write_script("#!/bin/sh\necho boom >&2\nexit 1\n");
-        let registry = registry_with_tool("fail", script.clone());
-        let block = run_tool_call(&registry, "id2", "fail", &serde_json::json!({}));
-        std::fs::remove_file(&script).ok();
-        match block {
-            ContentBlock::ToolResult {
-                content, is_error, ..
-            } => {
-                assert!(is_error);
-                assert!(content.contains("boom"));
-            }
-            other => panic!("expected ToolResult error, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn run_tool_call_reports_unknown_tool_as_error() {
-        let registry = Registry::default();
-        let block = run_tool_call(&registry, "id3", "ghost", &serde_json::json!({}));
-        match block {
-            ContentBlock::ToolResult {
-                tool_call_id,
-                content,
-                is_error,
-            } => {
-                assert_eq!(tool_call_id, "id3");
-                assert!(is_error);
-                assert!(content.contains("unknown tool"));
-            }
-            other => panic!("expected ToolResult error, got {other:?}"),
-        }
     }
 
     fn restore_registry_env(saved: Option<std::ffi::OsString>) {
@@ -1411,25 +1168,5 @@ mod tests {
         std::fs::remove_file(&path).ok();
         assert!(err.contains("isn't executable"));
         assert!(err.contains("chmod +x"));
-    }
-
-    #[test]
-    fn run_tool_call_enriches_launch_failure_with_remediation() {
-        // A tool whose script can't be launched surfaces a fix, not a raw OS error.
-        let registry = registry_with_tool(
-            "ghost_script",
-            PathBuf::from("/nonexistent/sp_tool_does_not_exist.sh"),
-        );
-        let block = run_tool_call(&registry, "id", "ghost_script", &serde_json::json!({}));
-        match block {
-            ContentBlock::ToolResult {
-                content, is_error, ..
-            } => {
-                assert!(is_error);
-                assert!(content.contains("could not run its script"));
-                assert!(content.contains("chmod +x"));
-            }
-            other => panic!("expected ToolResult error, got {other:?}"),
-        }
     }
 }
