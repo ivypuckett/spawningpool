@@ -30,8 +30,10 @@ impl Provider for Anthropic {
     ) -> Result<Completion, Error> {
         let body = build_request(model, ctx, opts, false);
         let resp = send(http, model, opts, &body).await?;
-        let parsed: WireResponse =
-            serde_json::from_str(&resp).map_err(|e| Error::Parse(e.to_string()))?;
+        let parsed: WireResponse = serde_json::from_str(&resp).map_err(|_| {
+            let preview = resp.chars().take(200).collect::<String>();
+            Error::Parse(format!("server response was not in the expected format; got: {preview}"))
+        })?;
         Ok(parsed.into_completion())
     }
 
@@ -49,8 +51,8 @@ impl Provider for Anthropic {
             let mut acc = StreamAccumulator::default();
             while let Some(line) = lines.next().await {
                 let line = line?;
-                let value: serde_json::Value =
-                    serde_json::from_str(&line).map_err(|e| Error::Parse(e.to_string()))?;
+                let value: serde_json::Value = serde_json::from_str(&line)
+                    .map_err(|_| Error::Parse(format!("stream contained an unexpected event: {line}")))?;
                 if let Some(event) = acc.handle(&value) {
                     yield event;
                 }

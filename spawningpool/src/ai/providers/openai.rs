@@ -37,8 +37,10 @@ impl Provider for OpenAi {
                 message: text,
             });
         }
-        let parsed: WireResponse =
-            serde_json::from_str(&text).map_err(|e| Error::Parse(e.to_string()))?;
+        let parsed: WireResponse = serde_json::from_str(&text).map_err(|_| {
+            let preview = text.chars().take(200).collect::<String>();
+            Error::Parse(format!("server response was not in the expected format; got: {preview}"))
+        })?;
         parsed.into_completion()
     }
 
@@ -70,8 +72,8 @@ impl Provider for OpenAi {
                     finished = true;
                     break;
                 }
-                let value: serde_json::Value =
-                    serde_json::from_str(&line).map_err(|e| Error::Parse(e.to_string()))?;
+                let value: serde_json::Value = serde_json::from_str(&line)
+                    .map_err(|_| Error::Parse(format!("stream contained an unexpected event: {line}")))?;
                 for event in acc.handle(&value) {
                     yield event;
                 }
@@ -282,8 +284,9 @@ fn request(
     opts: &CompleteOptions,
     body: &serde_json::Value,
 ) -> reqwest::RequestBuilder {
+    let base = model.base_url.trim_end_matches("/v1");
     let mut builder = http
-        .post(format!("{}/v1/chat/completions", model.base_url))
+        .post(format!("{base}/v1/chat/completions"))
         .header("content-type", "application/json")
         .json(body);
     // LM Studio does not require a key, but honor one if provided.
