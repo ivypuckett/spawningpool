@@ -47,7 +47,7 @@ sp define specialist name \
   --system-prompt 'prompt' \
   --tools 'tool,tool2' \      # optional, comma-separated (mutually exclusive with --constraint)
   --constraint 'tool' \       # optional, forces this one tool call (mutually exclusive with --tools)
-  --reasoning off|low|medium|high \   # optional, defaults to off
+  --reasoning off|low|medium|high \   # optional, defaults to off (must be off with --constraint)
   --stream                    # optional, stream the response
 
 # define a tool from an executable script — its `# desc:` and `# params:`
@@ -60,11 +60,21 @@ sp delete provider name
 sp delete model name
 sp delete tool name
 
-# list
+# show — print one definition as JSON
+sp show specialist name
+sp show provider name
+sp show model name
+sp show tool name
+
+# list — names of what's defined
 sp list specialists
 sp list providers
 sp list models
 sp list tools
+
+# discover the models a running LM Studio server currently has loaded
+# (at $LMSTUDIO_BASE_URL, default http://localhost:1234) instead of the registry
+sp list models --remote
 ```
 
 ### Providers
@@ -108,6 +118,9 @@ A specialist gets tools one of two ways, and the two are mutually exclusive:
 - `--constraint <tool>` forces the model to call that one tool — the core feature
   for a specialist whose sole job is to figure something out and call a tool with
   the result. The forced call runs once, its script executes, and the run ends.
+  A forced tool call is incompatible with reasoning (Anthropic rejects the pair),
+  so a constrained specialist must keep `--reasoning off`; `sp define specialist`
+  rejects the combination up front.
 
 A script's non-zero exit is fed back to the model as a tool error (agentic) or
 surfaced (constrained).
