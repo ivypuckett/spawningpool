@@ -103,10 +103,21 @@ impl Specialist {
     /// both. A forced tool can't be combined with cursory ones at the provider
     /// level, so this rejects the clash up front rather than producing a request
     /// the model can't satisfy.
+    ///
+    /// A constraint is also incompatible with reasoning: a forced `tool_choice`
+    /// combined with extended thinking is rejected by Anthropic (see
+    /// [`crate::ai::CompleteOptions::tool_choice`]), so this rejects the pairing
+    /// at define time instead of letting it fail as a runtime API error.
     pub fn validate(&self) -> Result<(), String> {
         if self.constraint.is_some() && !self.tools.is_empty() {
             return Err(format!(
                 "specialist '{}' sets both tools and a constraint; use one or the other",
+                self.name
+            ));
+        }
+        if self.constraint.is_some() && self.reasoning != Reasoning::Off {
+            return Err(format!(
+                "specialist '{}' forces a tool call with reasoning enabled; a forced tool call is incompatible with reasoning, so set --reasoning off",
                 self.name
             ));
         }
@@ -369,6 +380,15 @@ mod tests {
         // Constraint only is fine.
         specialist.tools = vec![];
         specialist.constraint = Some("a".to_string());
+        assert!(specialist.validate().is_ok());
+
+        // A constraint with reasoning on is rejected.
+        specialist.reasoning = Reasoning::High;
+        let err = specialist.validate().unwrap_err();
+        assert!(err.contains("incompatible with reasoning"));
+
+        // The same reasoning without a constraint is fine.
+        specialist.constraint = None;
         assert!(specialist.validate().is_ok());
     }
 

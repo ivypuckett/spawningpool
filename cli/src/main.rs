@@ -37,6 +37,11 @@ enum Command {
         #[command(subcommand)]
         kind: ListKind,
     },
+    /// Show a defined entity's full definition.
+    Show {
+        #[command(subcommand)]
+        entity: ShowEntity,
+    },
     /// Define an entity.
     Define {
         #[command(subcommand)]
@@ -53,8 +58,21 @@ enum Command {
 enum ListKind {
     Specialists,
     Providers,
-    Models,
+    Models {
+        /// Discover the models a running LM Studio server currently has loaded
+        /// (at `$LMSTUDIO_BASE_URL`) instead of listing the registry.
+        #[arg(long)]
+        remote: bool,
+    },
     Tools,
+}
+
+#[derive(Subcommand)]
+enum ShowEntity {
+    Specialist { name: String },
+    Provider { name: String },
+    Model { name: String },
+    Tool { name: String },
 }
 
 #[derive(Subcommand)]
@@ -131,7 +149,8 @@ async fn main() {
 async fn run(cli: Cli) -> Result<(), String> {
     match cli.command {
         Command::Run { specialist, prompt } => run_specialist(&specialist, &prompt).await,
-        Command::List { kind } => list(kind),
+        Command::List { kind } => list(kind).await,
+        Command::Show { entity } => show(entity),
         Command::Define { entity } => define(entity),
         Command::Delete { entity } => delete(entity),
     }
@@ -312,12 +331,16 @@ fn args_to_vars(arguments: &serde_json::Value) -> HashMap<String, String> {
         .collect()
 }
 
-fn list(kind: ListKind) -> Result<(), String> {
+async fn list(kind: ListKind) -> Result<(), String> {
+    // Remote model discovery queries a live server rather than the registry.
+    if let ListKind::Models { remote: true } = kind {
+        return list_remote_models().await;
+    }
     let registry = store::load()?;
     let mut names: Vec<&String> = match kind {
         ListKind::Specialists => registry.specialists.keys().collect(),
         ListKind::Providers => registry.providers.keys().collect(),
-        ListKind::Models => registry.models.keys().collect(),
+        ListKind::Models { .. } => registry.models.keys().collect(),
         ListKind::Tools => registry.tools.keys().collect(),
     };
     names.sort();
@@ -325,6 +348,65 @@ fn list(kind: ListKind) -> Result<(), String> {
         println!("{name}");
     }
     Ok(())
+}
+
+/// Discover the model ids a running LM Studio server currently has loaded and
+/// print them, sorted. Discovery is only meaningful for an OpenAI-compatible
+/// server we can query (`GET {base_url}/v1/models`).
+async fn list_remote_models() -> Result<(), String> {
+    let models = Client::new()
+        .list_models("lmstudio")
+        .await
+        .map_err(|e| e.to_string())?;
+    let mut ids: Vec<String> = models.into_iter().map(|m| m.id).collect();
+    ids.sort();
+    for id in ids {
+        println!("{id}");
+    }
+    Ok(())
+}
+
+/// Print an entity's full definition as pretty JSON, or error if it is absent.
+/// Plain serializable definitions never fail to render.
+fn show(entity: ShowEntity) -> Result<(), String> {
+    let registry = store::load()?;
+    let (found, what) = match entity {
+        ShowEntity::Specialist { name } => (
+            registry
+                .specialists
+                .get(&name)
+                .map(|d| serde_json::to_string_pretty(d).expect("definition serializes")),
+            format!("specialist {name}"),
+        ),
+        ShowEntity::Provider { name } => (
+            registry
+                .providers
+                .get(&name)
+                .map(|d| serde_json::to_string_pretty(d).expect("definition serializes")),
+            format!("provider {name}"),
+        ),
+        ShowEntity::Model { name } => (
+            registry
+                .models
+                .get(&name)
+                .map(|d| serde_json::to_string_pretty(d).expect("definition serializes")),
+            format!("model {name}"),
+        ),
+        ShowEntity::Tool { name } => (
+            registry
+                .tools
+                .get(&name)
+                .map(|d| serde_json::to_string_pretty(d).expect("definition serializes")),
+            format!("tool {name}"),
+        ),
+    };
+    match found {
+        Some(json) => {
+            println!("{json}");
+            Ok(())
+        }
+        None => Err(format!("no such {what}")),
+    }
 }
 
 fn define(entity: DefineEntity) -> Result<(), String> {
@@ -600,8 +682,8 @@ mod tests {
         }
     }
 
-    #[test]
-    fn define_list_and_delete_round_trip_through_the_store() {
+    #[tokio::test]
+    async fn define_list_show_and_delete_round_trip_through_the_store() {
         let _guard = store::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let saved = std::env::var_os("SPAWNINGPOOL_REGISTRY");
         let dir = std::env::temp_dir().join(format!("sp_cli_define_{}", std::process::id()));
@@ -619,7 +701,17 @@ mod tests {
         // The provider is persisted and reloads from disk.
         assert!(store::load().unwrap().providers.contains_key("anthropic"));
         // Listing succeeds against the populated registry.
-        list(ListKind::Providers).unwrap();
+        list(ListKind::Providers).await.unwrap();
+        // Showing a defined entity succeeds; an absent one errors.
+        show(ShowEntity::Provider {
+            name: "anthropic".into(),
+        })
+        .unwrap();
+        let err = show(ShowEntity::Provider {
+            name: "ghost".into(),
+        })
+        .unwrap_err();
+        assert!(err.contains("no such"));
 
         // Deleting it removes it.
         delete(DeleteEntity::Provider {
