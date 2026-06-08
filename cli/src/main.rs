@@ -7,8 +7,12 @@ use std::path::PathBuf;
 
 use clap::{Parser, Subcommand};
 use futures::StreamExt;
-use spawningpool::ai::{Api, Client, ContentBlock, Reasoning, StreamEvent};
-use spawningpool::{ModelDef, ProviderDef, Specialist, ToolDef};
+use spawningpool::ai::{
+    Api, Client, CompleteOptions, ContentBlock, Context, Message, Model, Reasoning, Role,
+    StreamEvent, Usage,
+};
+use spawningpool::{ModelDef, ProviderDef, Registry, Specialist, ToolDef};
+use std::collections::HashMap;
 use std::io::Write;
 
 #[derive(Parser)]
@@ -135,6 +139,10 @@ async fn run(cli: Cli) -> Result<(), String> {
     }
 }
 
+/// Cap on agentic turns, so a specialist that keeps calling tools without ever
+/// settling on an answer terminates instead of looping forever.
+const MAX_TURNS: usize = 16;
+
 async fn run_specialist(name: &str, prompt: &str) -> Result<(), String> {
     let registry = store::load()?;
     let specialist = registry
@@ -143,7 +151,7 @@ async fn run_specialist(name: &str, prompt: &str) -> Result<(), String> {
         .ok_or_else(|| format!("unknown specialist: {name}"))?;
 
     let model = registry.resolve_model(specialist)?;
-    let ctx = registry.build_context(specialist, prompt)?;
+    let mut ctx = registry.build_context(specialist, prompt)?;
     let mut opts = specialist.complete_options();
     // Source the API key from the provider's configured env var, if any.
     if let Some(env) = registry
@@ -157,79 +165,153 @@ async fn run_specialist(name: &str, prompt: &str) -> Result<(), String> {
     }
 
     let client = Client::new();
-    if specialist.stream {
-        stream_completion(&client, &model, &ctx, &opts).await
-    } else {
-        await_completion(&client, &model, &ctx, &opts).await
-    }
-}
+    // A constrained specialist makes a single forced call; a tools specialist
+    // runs agentically until it stops calling tools.
+    let agentic = specialist.constraint.is_none();
 
-async fn await_completion(
-    client: &Client,
-    model: &spawningpool::ai::Model,
-    ctx: &spawningpool::ai::Context,
-    opts: &spawningpool::ai::CompleteOptions,
-) -> Result<(), String> {
-    let completion = client
-        .complete(model, ctx, opts)
-        .await
-        .map_err(|e| e.to_string())?;
+    for _ in 0..MAX_TURNS {
+        let (message, usage) = one_turn(&client, &model, &ctx, &opts, specialist.stream).await?;
+        eprintln!("[usage] {} in / {} out", usage.input, usage.output);
 
-    for block in &completion.message.content {
-        match block {
-            ContentBlock::Text { text } => println!("{text}"),
-            ContentBlock::ToolCall {
-                name, arguments, ..
-            } => println!("[tool-call] {name} {arguments}"),
-            ContentBlock::Thinking { .. } | ContentBlock::ToolResult { .. } => {}
+        let calls: Vec<(String, String, serde_json::Value)> = message
+            .content
+            .iter()
+            .filter_map(|block| match block {
+                ContentBlock::ToolCall {
+                    id,
+                    name,
+                    arguments,
+                } => Some((id.clone(), name.clone(), arguments.clone())),
+                _ => None,
+            })
+            .collect();
+
+        // No tool calls means the model produced its final answer.
+        if calls.is_empty() {
+            return Ok(());
         }
+
+        let mut results = Vec::with_capacity(calls.len());
+        for (id, tool_name, arguments) in &calls {
+            results.push(run_tool_call(&registry, id, tool_name, arguments));
+        }
+
+        // The constraint guaranteed exactly one call; once executed, we're done.
+        if !agentic {
+            return Ok(());
+        }
+
+        // Feed the assistant's turn and the tool results back, then loop.
+        ctx.messages.push(message);
+        ctx.messages.push(Message {
+            role: Role::User,
+            content: results,
+        });
     }
-    eprintln!(
-        "[usage] {} in / {} out",
-        completion.usage.input, completion.usage.output
-    );
-    Ok(())
+
+    Err(format!(
+        "specialist did not finish within {MAX_TURNS} turns"
+    ))
 }
 
-async fn stream_completion(
+/// Run one model turn, printing any assistant text (streamed live when the
+/// specialist streams), and return the fully assembled message plus usage.
+async fn one_turn(
     client: &Client,
-    model: &spawningpool::ai::Model,
-    ctx: &spawningpool::ai::Context,
-    opts: &spawningpool::ai::CompleteOptions,
-) -> Result<(), String> {
-    let mut events = client
-        .stream(model, ctx, opts)
-        .await
-        .map_err(|e| e.to_string())?;
-    let mut stdout = std::io::stdout();
-    let mut printed_text = false;
-
-    while let Some(event) = events.next().await {
-        match event.map_err(|e| e.to_string())? {
-            StreamEvent::TextDelta { delta, .. } => {
-                print!("{delta}");
-                stdout.flush().ok();
-                printed_text = true;
-            }
-            StreamEvent::Done { usage, message, .. } => {
-                if printed_text {
-                    println!();
+    model: &Model,
+    ctx: &Context,
+    opts: &CompleteOptions,
+    stream: bool,
+) -> Result<(Message, Usage), String> {
+    if stream {
+        let mut events = client
+            .stream(model, ctx, opts)
+            .await
+            .map_err(|e| e.to_string())?;
+        let mut stdout = std::io::stdout();
+        let mut printed_text = false;
+        while let Some(event) = events.next().await {
+            match event.map_err(|e| e.to_string())? {
+                StreamEvent::TextDelta { delta, .. } => {
+                    print!("{delta}");
+                    stdout.flush().ok();
+                    printed_text = true;
                 }
-                // Tool-call arguments only make sense once fully assembled.
-                for block in &message.content {
-                    if let ContentBlock::ToolCall {
-                        name, arguments, ..
-                    } = block
-                    {
-                        println!("[tool-call] {name} {arguments}");
+                StreamEvent::Done { usage, message, .. } => {
+                    if printed_text {
+                        println!();
                     }
+                    return Ok((message, usage));
                 }
-                eprintln!("[usage] {} in / {} out", usage.input, usage.output);
+                StreamEvent::ThinkingDelta { .. } | StreamEvent::ToolCallDelta { .. } => {}
             }
-            StreamEvent::ThinkingDelta { .. } | StreamEvent::ToolCallDelta { .. } => {}
+        }
+        Err("stream ended without a final event".to_string())
+    } else {
+        let completion = client
+            .complete(model, ctx, opts)
+            .await
+            .map_err(|e| e.to_string())?;
+        for block in &completion.message.content {
+            if let ContentBlock::Text { text } = block {
+                println!("{text}");
+            }
+        }
+        Ok((completion.message, completion.usage))
+    }
+}
+
+/// Execute one tool call by running its backing Taskfile task, print the
+/// outcome, and return the [`ContentBlock::ToolResult`] to feed back to the
+/// model. A failed or unknown task becomes a tool error so the model can react.
+fn run_tool_call(
+    registry: &Registry,
+    id: &str,
+    tool_name: &str,
+    arguments: &serde_json::Value,
+) -> ContentBlock {
+    let tool = match registry.tools.get(tool_name) {
+        Some(tool) => tool,
+        None => {
+            let msg = format!("unknown tool: {tool_name}");
+            eprintln!("[tool {tool_name}] {msg}");
+            return ContentBlock::tool_error(id, msg);
+        }
+    };
+
+    let vars = args_to_vars(arguments);
+    match spawningpool::run_task(&tool.taskfile, &tool.task, &vars) {
+        Ok(run) => {
+            println!("[tool {tool_name}]\n{}", run.output);
+            if run.success {
+                ContentBlock::tool_result(id, run.output)
+            } else {
+                ContentBlock::tool_error(id, run.output)
+            }
+        }
+        Err(e) => {
+            let msg = e.to_string();
+            eprintln!("[tool {tool_name}] failed to run: {msg}");
+            ContentBlock::tool_error(id, msg)
         }
     }
-    Ok(())
+}
+
+/// Lower a tool call's JSON arguments into the `KEY=value` variables a task
+/// expects. Non-string values are stringified via their JSON form.
+fn args_to_vars(arguments: &serde_json::Value) -> HashMap<String, String> {
+    arguments
+        .as_object()
+        .into_iter()
+        .flatten()
+        .map(|(key, value)| {
+            let value = match value {
+                serde_json::Value::String(s) => s.clone(),
+                other => other.to_string(),
+            };
+            (key.clone(), value)
+        })
+        .collect()
 }
 
 fn list(kind: ListKind) -> Result<(), String> {
@@ -302,6 +384,7 @@ fn define(entity: DefineEntity) -> Result<(), String> {
                 reasoning: parse_reasoning(&reasoning)?,
                 stream,
             };
+            def.validate()?;
             registry.specialists.insert(name.clone(), def);
             format!("specialist {name}")
         }
@@ -400,5 +483,16 @@ mod tests {
         assert_eq!(parse_reasoning("high"), Ok(Reasoning::High));
         assert_eq!(parse_reasoning("off"), Ok(Reasoning::Off));
         assert!(parse_reasoning("ultra").is_err());
+    }
+
+    #[test]
+    fn args_to_vars_stringifies_values_and_ignores_non_objects() {
+        let vars = args_to_vars(&serde_json::json!({ "env": "prod", "count": 3 }));
+        assert_eq!(vars.get("env"), Some(&"prod".to_string()));
+        // Non-string values fall back to their JSON form.
+        assert_eq!(vars.get("count"), Some(&"3".to_string()));
+
+        // A non-object (e.g. malformed args) yields no variables.
+        assert!(args_to_vars(&serde_json::json!("oops")).is_empty());
     }
 }

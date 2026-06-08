@@ -45,8 +45,8 @@ sp define specialist name \
   --provider provider \
   --model model \
   --system-prompt 'prompt' \
-  --tools 'tool,tool2' \      # optional, comma-separated
-  --constraint 'tool' \       # optional, forces this tool call
+  --tools 'tool,tool2' \      # optional, comma-separated (mutually exclusive with --constraint)
+  --constraint 'tool' \       # optional, forces this one tool call (mutually exclusive with --tools)
   --reasoning off|low|medium|high \   # optional, defaults to off
   --stream                    # optional, stream the response
 
@@ -78,13 +78,24 @@ spawningpool deliberately does **not** embed a catalog of hosted models or their
 limits — those facts go stale and being their arbiter is a liability. Models you
 call are defined in your own registry via `sp define model`.
 
-### Constrained decoding
+### Tools and constraints
 
-A specialist's `--constraint <tool>` forces the model to call that tool — the
-core feature for a specialist whose sole job is to figure something out and call
-a tool with the result. There is also an opt-in validator that checks a model's
-tool-call arguments against the tool's JSON Schema and feeds violations back to
-the model to retry.
+A specialist gets tools one of two ways, and the two are mutually exclusive:
+
+- `--tools <a,b,…>` runs the specialist **agentically**: the model decides which
+  tools to call, each call's backing Taskfile task is executed and its output is
+  fed back, and the loop continues until the model stops calling tools (or hits a
+  turn cap).
+- `--constraint <tool>` forces the model to call that one tool — the core feature
+  for a specialist whose sole job is to figure something out and call a tool with
+  the result. The forced call runs once, its task executes, and the run ends.
+
+Either way the backing task is run via the `task` binary, with the model's
+arguments passed as `KEY=value` task variables. A task's non-zero exit is fed
+back to the model as a tool error (agentic) or surfaced (constrained).
+
+There is also an opt-in validator that checks a model's tool-call arguments
+against the tool's JSON Schema and feeds violations back to the model to retry.
 
 ## Technology choices
 

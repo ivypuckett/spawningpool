@@ -96,6 +96,33 @@ impl Specialist {
             ..Default::default()
         }
     }
+
+    /// A specialist exposes EITHER a set of freely-callable [`Specialist::tools`]
+    /// (the model decides what to call, and the runner loops until it stops) OR a
+    /// single forced [`Specialist::constraint`] (one guaranteed call) — never
+    /// both. A forced tool can't be combined with cursory ones at the provider
+    /// level, so this rejects the clash up front rather than producing a request
+    /// the model can't satisfy.
+    pub fn validate(&self) -> Result<(), String> {
+        if self.constraint.is_some() && !self.tools.is_empty() {
+            return Err(format!(
+                "specialist '{}' sets both tools and a constraint; use one or the other",
+                self.name
+            ));
+        }
+        Ok(())
+    }
+
+    /// The tools to expose to the model: the freely-callable [`Specialist::tools`],
+    /// or — when a [`Specialist::constraint`] is set — just that single forced
+    /// tool. A forced `tool_choice` requires its tool to be present in the
+    /// request, so the constraint case still needs the tool resolved.
+    pub fn tool_names(&self) -> &[String] {
+        match &self.constraint {
+            Some(constraint) => std::slice::from_ref(constraint),
+            None => &self.tools,
+        }
+    }
 }
 
 /// A defined tool (`sp define tool`), backed by one Taskfile task. The task's
@@ -159,10 +186,12 @@ impl Registry {
         Ok(model.resolve(provider))
     }
 
-    /// Resolve a specialist's named tools into runtime [`Tool`]s.
+    /// Resolve a specialist's named tools into runtime [`Tool`]s. Uses
+    /// [`Specialist::tool_names`], so a constrained specialist resolves its single
+    /// forced tool even though its [`Specialist::tools`] list is empty.
     pub fn resolve_tools(&self, specialist: &Specialist) -> Result<Vec<Tool>, String> {
         specialist
-            .tools
+            .tool_names()
             .iter()
             .map(|name| {
                 self.tools
@@ -306,7 +335,7 @@ mod tests {
             provider: "anthropic".to_string(),
             model: "claude-opus-4-8".to_string(),
             system_prompt: String::new(),
-            tools: vec!["classify".to_string()],
+            tools: vec![],
             constraint: Some("classify".to_string()),
             reasoning: Reasoning::Low,
             stream: false,
@@ -321,6 +350,80 @@ mod tests {
             ..specialist
         };
         assert_eq!(unconstrained.complete_options().tool_choice, None);
+    }
+
+    #[test]
+    fn validate_rejects_both_tools_and_constraint() {
+        let mut specialist = Specialist {
+            name: "x".to_string(),
+            provider: "anthropic".to_string(),
+            model: "claude-opus-4-8".to_string(),
+            system_prompt: String::new(),
+            tools: vec!["a".to_string()],
+            constraint: Some("a".to_string()),
+            reasoning: Reasoning::Off,
+            stream: false,
+        };
+        assert!(specialist.validate().is_err());
+
+        // Tools only is fine.
+        specialist.constraint = None;
+        assert!(specialist.validate().is_ok());
+
+        // Constraint only is fine.
+        specialist.tools = vec![];
+        specialist.constraint = Some("a".to_string());
+        assert!(specialist.validate().is_ok());
+    }
+
+    #[test]
+    fn tool_names_prefers_the_constraint_when_set() {
+        let mut specialist = Specialist {
+            name: "x".to_string(),
+            provider: "anthropic".to_string(),
+            model: "claude-opus-4-8".to_string(),
+            system_prompt: String::new(),
+            tools: vec!["a".to_string(), "b".to_string()],
+            constraint: None,
+            reasoning: Reasoning::Off,
+            stream: false,
+        };
+        assert_eq!(specialist.tool_names(), ["a".to_string(), "b".to_string()]);
+
+        specialist.tools = vec![];
+        specialist.constraint = Some("forced".to_string());
+        assert_eq!(specialist.tool_names(), ["forced".to_string()]);
+    }
+
+    #[test]
+    fn build_context_surfaces_the_constrained_tool() {
+        let mut registry = Registry::default();
+        registry.tools.insert(
+            "classify".to_string(),
+            ToolDef {
+                name: "classify".to_string(),
+                taskfile: PathBuf::from("Taskfile.yml"),
+                task: "classify".to_string(),
+                description: "Classify input".to_string(),
+                params: vec!["text".to_string()],
+            },
+        );
+        let specialist = Specialist {
+            name: "classifier".to_string(),
+            provider: "anthropic".to_string(),
+            model: "claude-opus-4-8".to_string(),
+            system_prompt: "You classify.".to_string(),
+            tools: vec![],
+            constraint: Some("classify".to_string()),
+            reasoning: Reasoning::Off,
+            stream: false,
+        };
+
+        // The forced tool must be present in the request even though `tools` is
+        // empty, or the provider would reject the tool_choice.
+        let ctx = registry.build_context(&specialist, "spam?").unwrap();
+        assert_eq!(ctx.tools.len(), 1);
+        assert_eq!(ctx.tools[0].name, "classify");
     }
 
     #[test]

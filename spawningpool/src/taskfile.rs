@@ -51,6 +51,45 @@ pub struct TaskSummary {
     pub desc: Option<String>,
 }
 
+/// The outcome of running a task: whether it exited successfully and its
+/// combined stdout/stderr, ready to feed back to the model as a tool result.
+#[derive(Debug, PartialEq, Eq)]
+pub struct TaskRun {
+    pub success: bool,
+    pub output: String,
+}
+
+/// Run one Taskfile task via the `task` binary, passing each argument as a
+/// `KEY=value` CLI variable (so it is reachable as `{{.KEY}}` in the task).
+/// Captures combined stdout/stderr; a non-zero exit is reported via
+/// [`TaskRun::success`], not as an `Err` (only a failure to launch is an `Err`).
+pub fn run_task(
+    taskfile: &Path,
+    task: &str,
+    args: &HashMap<String, String>,
+) -> Result<TaskRun, Box<dyn std::error::Error>> {
+    let mut cmd = std::process::Command::new("task");
+    cmd.arg("--taskfile").arg(taskfile).arg(task);
+    for (key, value) in args {
+        cmd.arg(format!("{key}={value}"));
+    }
+    let output = cmd.output()?;
+
+    let mut combined = String::from_utf8_lossy(&output.stdout).into_owned();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    if !stderr.is_empty() {
+        if !combined.is_empty() {
+            combined.push('\n');
+        }
+        combined.push_str(&stderr);
+    }
+
+    Ok(TaskRun {
+        success: output.status.success(),
+        output: combined,
+    })
+}
+
 fn parse_taskfile(path: &Path) -> Result<Taskfile, Box<dyn std::error::Error>> {
     let contents = std::fs::read_to_string(path)?;
     let taskfile = serde_yaml::from_str(&contents)?;
