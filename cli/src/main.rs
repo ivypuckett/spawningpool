@@ -902,8 +902,8 @@ mod tests {
         }
     }
 
-    #[tokio::test]
-    async fn define_list_show_and_delete_round_trip_through_the_store() {
+    #[test]
+    fn define_list_show_and_delete_round_trip_through_the_store() {
         let _guard = store::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let saved = std::env::var_os("SPAWNINGPOOL_REGISTRY");
         let dir = std::env::temp_dir().join(format!("sp_cli_define_{}", std::process::id()));
@@ -920,8 +920,13 @@ mod tests {
 
         // The provider is persisted and reloads from disk.
         assert!(store::load().unwrap().providers.contains_key("anthropic"));
-        // Listing succeeds against the populated registry.
-        list(ListKind::Providers).await.unwrap();
+        // Listing succeeds against the populated registry. Driven on a local
+        // runtime rather than `#[tokio::test]` so the env-serializing guard is
+        // never held across an await point.
+        tokio::runtime::Runtime::new()
+            .unwrap()
+            .block_on(list(ListKind::Providers))
+            .unwrap();
         // Showing a defined entity succeeds; an absent one errors.
         show(ShowEntity::Provider {
             name: "anthropic".into(),
