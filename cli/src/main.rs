@@ -52,6 +52,7 @@ enum Command {
 
 #[derive(Subcommand)]
 enum ListKind {
+    #[command(aliases = ["lenny", "ling"])]
     Specialists,
     Providers,
     Models {
@@ -65,10 +66,19 @@ enum ListKind {
 
 #[derive(Subcommand)]
 enum ShowEntity {
-    Specialist { name: String },
-    Provider { name: String },
-    Model { name: String },
-    Tool { name: String },
+    #[command(aliases = ["lenny", "ling"])]
+    Specialist {
+        name: String,
+    },
+    Provider {
+        name: String,
+    },
+    Model {
+        name: String,
+    },
+    Tool {
+        name: String,
+    },
 }
 
 #[derive(Subcommand)]
@@ -102,6 +112,7 @@ enum DefineEntity {
         context_window: u32,
     },
     /// Define a specialist template.
+    #[command(aliases = ["lenny", "ling"])]
     Specialist {
         name: String,
         #[arg(long)]
@@ -133,10 +144,19 @@ enum DefineEntity {
 
 #[derive(Subcommand)]
 enum DeleteEntity {
-    Specialist { name: String },
-    Provider { name: String },
-    Model { name: String },
-    Tool { name: String },
+    #[command(aliases = ["lenny", "ling"])]
+    Specialist {
+        name: String,
+    },
+    Provider {
+        name: String,
+    },
+    Model {
+        name: String,
+    },
+    Tool {
+        name: String,
+    },
 }
 
 #[tokio::main]
