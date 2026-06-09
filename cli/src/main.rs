@@ -52,15 +52,18 @@ enum Command {
 
 #[derive(Subcommand)]
 enum ListKind {
-    #[command(aliases = ["lenny", "ling", "lennys", "lings"])]
+    #[command(aliases = ["specialist", "lenny", "ling", "lennys", "lings"])]
     Specialists,
+    #[command(alias = "provider")]
     Providers,
+    #[command(alias = "model")]
     Models {
         /// Discover the models a running LM Studio server currently has loaded
         /// (at `$LMSTUDIO_BASE_URL`) instead of listing the registry.
         #[arg(long)]
         remote: bool,
     },
+    #[command(alias = "tool")]
     Tools,
 }
 
