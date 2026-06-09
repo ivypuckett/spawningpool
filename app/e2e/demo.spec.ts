@@ -19,7 +19,7 @@ import { installTauriMock } from "./tauri-mock";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const SCREENS = path.resolve(here, "../media/screens");
-const BASE_URL = process.env.PW_BASE_URL ?? "http://localhost:1420";
+const BASE_URL = "http://localhost:1420";
 const SIZE = { width: 1280, height: 800 };
 const BEAT = 250; // let the UI settle before each capture
 

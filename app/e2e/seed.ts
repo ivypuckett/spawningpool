@@ -1,7 +1,7 @@
-// Deterministic registry data the mocked Tauri backend serves during a video
-// render. The shapes mirror what the real `list_entities` / `show_entity`
-// commands return (see app/src-tauri/src/commands/registry.rs), so the recorded
-// UI looks exactly like it does against a populated registry on disk.
+// Deterministic registry data the mocked Tauri backend serves during a
+// screenshot render. The shapes mirror what the real `list_entities` /
+// `show_entity` commands return (see app/src-tauri/src/commands/registry.rs), so
+// the rendered UI looks exactly like it does against a populated registry on disk.
 
 import type { EntityKind, RegistrySnapshot } from "../src/lib/types";
 

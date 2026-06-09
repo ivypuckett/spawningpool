@@ -1,5 +1,5 @@
 // Installs a minimal in-page mock of Tauri's IPC bridge so the Svelte frontend
-// runs in a plain browser (no webview, no Rust backend) during a video render.
+// runs in a plain browser (no webview, no Rust backend) during a screenshot render.
 //
 // The real `@tauri-apps/api` talks to the backend purely through two globals:
 //   - window.__TAURI_INTERNALS__.invoke / .transformCallback
@@ -42,14 +42,11 @@ function mockBridge(seed: Seed): void {
       }
       // Event plugin: registering a listener returns an opaque id. We never
       // emit, so the registry simply loads once — perfect for a deterministic
-      // recording. Everything else (unlisten, emit) is a no-op.
+      // render. Everything else (unlisten, emit) is a no-op.
       if (cmd === "plugin:event|listen") {
         return nextId++;
       }
       return null;
-    },
-    convertFileSrc(filePath: string): string {
-      return filePath;
     },
   };
 

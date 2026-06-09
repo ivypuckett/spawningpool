@@ -34,9 +34,8 @@ cargo test "${cargo_scope[@]}"
 # Publish app/media/screens/*.png to refs/heads/<media_branch> as a single
 # parentless commit; the force-push discards the previous screenshots.
 publish_screenshots() {
-  local branch media_branch tree commit
-  branch=$(git rev-parse --abbrev-ref HEAD)
-  media_branch="screenshots-${branch//\//-}"
+  local media_branch tree commit
+  media_branch=$(app/e2e/screenshot-urls.sh --ref)
 
   shopt -s nullglob
   local pngs=(app/media/screens/*.png)
@@ -51,9 +50,11 @@ publish_screenshots() {
       printf '100644 blob %s\t%s\n' "$(git hash-object -w "$f")" "$(basename "$f")"
     done | git mktree
   )
-  commit=$(echo "screenshots for $branch" | git commit-tree "$tree")
+  commit=$(echo "screenshots for $media_branch" | git commit-tree "$tree")
   git push -f origin "$commit:refs/heads/$media_branch"
   echo "  published ${#pngs[@]} screenshots to origin/$media_branch"
+  echo "  PR body embed (app/e2e/screenshot-urls.sh):"
+  app/e2e/screenshot-urls.sh | sed 's/^/    /'
 }
 
 echo "--- render UI screenshots ---"

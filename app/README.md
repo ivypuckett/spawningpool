@@ -67,8 +67,11 @@ force-pushed so the previous set is discarded:
   refresh on every commit with no GitHub token — just the push credentials git
   already has. (Public repo, so plain `raw.githubusercontent.com` URLs render
   inline.)
-- Set the PR body once (it references the stable URLs); delete the
-  `screenshots-<branch>` branch when the PR closes.
+- Don't hand-write those URLs. `app/e2e/screenshot-urls.sh` prints the exact
+  markdown block (the push target and the URLs come from that one script, so
+  they can't drift); the pre-commit hook also prints it after publishing. Paste
+  it into the PR body once, then delete the `screenshots-<branch>` branch when
+  the PR closes.
 
 This runs on every commit — the screenshots double as living proof of what the
 system renders, so they're kept current regardless of what changed. It's strict:
