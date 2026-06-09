@@ -3,6 +3,7 @@ dist
 test-results
 playwright-report
 .browser
+media
 .vscode
 .vite
 .env

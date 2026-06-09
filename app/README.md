@@ -35,34 +35,41 @@ npm --prefix app run tauri build
 npm --prefix app run render
 ```
 
-This produces a deterministic visual representation of the UI so frontend work
-can be seen and reviewed:
-
-- **Screenshots** of each UI state in `app/media/screens/*.png` — the primary
-  artifact. An agent can read these back to verify its own changes, and they
-  show up inline in a PR.
-- A short **walkthrough video** at `app/media/spawningpool-demo.webm`.
+This captures each UI state to `app/media/screens/*.png` (gitignored). An agent
+can read these back to verify its own frontend changes, and the pre-commit hook
+publishes them into the PR (below).
 
 It drives the exact Svelte frontend the app ships, mocking only the Tauri IPC
 backend with fixed seed data (`e2e/`), so the output is reproducible and needs
-no display server, Rust build, or running Tauri webview.
+no display server, Rust build, or running Tauri webview. Edit the captured
+states in `e2e/demo.spec.ts` and the registry data in `e2e/seed.ts`.
 
 ### How it runs in a locked-down environment
 
 Cloud agent sandboxes often block Playwright's browser CDN. To stay portable,
 the harness fetches **Chrome for Testing** (pinned in `e2e/browser.ts`) from
-the Google Cloud Storage bucket on first run, caching it under `app/.browser`
-(gitignored). Nothing else is required — no `playwright install`, no system
-Chrome, no apt packages.
+the reachable Google Cloud Storage bucket on first run, caching it under
+`app/.browser` (gitignored). Nothing else is required — no `playwright install`,
+no system Chrome, no apt packages.
 
-### Pre-commit
+### Screenshots in the PR
 
-The pre-commit hook re-renders and re-stages `app/media` automatically, but
-only when a commit touches the frontend (`app/src/`, `app/index.html`,
-`app/e2e/`, or the Playwright/Vite/Svelte config). Rust-only commits skip it.
-If the browser can't be provisioned (no network) it warns and skips rather than
-blocking; a genuine render failure (e.g. a renamed control breaking the
-walkthrough) fails the commit so the visuals can't silently go stale.
+The screenshots aren't committed to the branch (they'd churn the diff and
+outlive the PR). Instead the pre-commit hook publishes them, on any frontend
+change, as a single parentless commit on a disposable side branch
+`screenshots-<branch>`, force-pushed so the previous set is discarded:
 
-Edit the captured states in `e2e/demo.spec.ts` and the registry data in
-`e2e/seed.ts` to change what's shown.
+- The PR description embeds those images by **stable URL**
+  (`…/blob/screenshots-<branch>/01-overview.png?raw=true`), which renders inline
+  for collaborators even on a private repo. Because the URL is stable and the
+  hook force-pushes fresh images, the pictures refresh on every frontend commit
+  with no GitHub token — just the push credentials git already has.
+- Set the PR body once (it references the stable URLs); delete the
+  `screenshots-<branch>` branch when the PR closes.
+
+Only frontend commits trigger this (`app/src/`, `app/index.html`, `app/e2e/`,
+or the Playwright/Vite/Svelte config); Rust-only commits skip it. Rendering and
+publishing are best-effort — if the browser can't be provisioned or the push
+fails (offline), the hook warns and continues; only a genuine render failure
+(e.g. a renamed control breaking the walkthrough) fails the commit, so the
+screenshots can't silently go stale.
