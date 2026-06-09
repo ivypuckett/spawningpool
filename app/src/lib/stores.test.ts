@@ -29,6 +29,26 @@ describe("registry store", () => {
     selection.set({ kind: "provider", name: "anthropic" });
     expect(get(selection)).toEqual({ kind: "provider", name: "anthropic" });
   });
+
+  it("loadRegistry clears selection when the selected entity is absent from the new snapshot", async () => {
+    selection.set({ kind: "provider", name: "anthropic" });
+    const snapshot = { providers: [], models: [], specialists: [], tools: [], registry_path: "/tmp/registry.json" };
+    vi.mocked(listEntities).mockResolvedValue(snapshot);
+
+    await loadRegistry();
+
+    expect(get(selection)).toBeNull();
+  });
+
+  it("loadRegistry preserves selection when the selected entity is still present", async () => {
+    selection.set({ kind: "model", name: "claude" });
+    const snapshot = { providers: [], models: ["claude"], specialists: [], tools: [], registry_path: "/tmp/registry.json" };
+    vi.mocked(listEntities).mockResolvedValue(snapshot);
+
+    await loadRegistry();
+
+    expect(get(selection)).toEqual({ kind: "model", name: "claude" });
+  });
 });
 
 describe("watchRegistry", () => {

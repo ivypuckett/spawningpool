@@ -1,5 +1,5 @@
-import { writable } from "svelte/store";
-import type { RegistrySnapshot, Selection } from "./types";
+import { get, writable } from "svelte/store";
+import type { EntityKind, RegistrySnapshot, Selection } from "./types";
 import { listEntities } from "./api";
 import { listen } from "@tauri-apps/api/event";
 
@@ -9,9 +9,24 @@ export const registry = writable<RegistrySnapshot | null>(null);
 /** The currently-selected entity in the UI, or null when nothing is selected. */
 export const selection = writable<Selection | null>(null);
 
-/** Fetch the registry snapshot and publish it to the `registry` store. */
+function namesForKind(snapshot: RegistrySnapshot, kind: EntityKind): string[] {
+  switch (kind) {
+    case "provider": return snapshot.providers;
+    case "model": return snapshot.models;
+    case "specialist": return snapshot.specialists;
+    case "tool": return snapshot.tools;
+  }
+}
+
+/** Fetch the registry snapshot and publish it to the `registry` store.
+ *  Clears `selection` if the selected entity is absent from the new snapshot. */
 export async function loadRegistry(): Promise<void> {
-  registry.set(await listEntities());
+  const snapshot = await listEntities();
+  registry.set(snapshot);
+  const sel = get(selection);
+  if (sel && !namesForKind(snapshot, sel.kind).includes(sel.name)) {
+    selection.set(null);
+  }
 }
 
 /** Reload the registry whenever the backend signals a change, and on window focus.

@@ -56,7 +56,9 @@
   </nav>
 
   <main class="middle-pane">
-    <EntityList kind={activeKind} names={namesFor(activeKind)} />
+    {#key activeKind}
+      <EntityList kind={activeKind} names={namesFor(activeKind)} />
+    {/key}
   </main>
 
   <aside class="right-pane">

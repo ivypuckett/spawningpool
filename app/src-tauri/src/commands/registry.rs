@@ -130,6 +130,71 @@ mod tests {
     }
 
     #[test]
+    fn show_entity_returns_model_definition() {
+        let _g = crate::test_support::env_lock();
+        let _tmp = crate::test_support::point_registry_at_temp();
+
+        let mut reg = spawningpool::Registry::default();
+        reg.models.insert(
+            "claude-3-5-sonnet".into(),
+            spawningpool::ModelDef {
+                id: "claude-3-5-sonnet".into(),
+                name: "Claude 3.5 Sonnet".into(),
+                provider: "anthropic".into(),
+                max_tokens: 8192,
+                context_window: 200_000,
+            },
+        );
+        spawningpool::store::save(&reg).unwrap();
+
+        let result = show_entity("model".into(), "claude-3-5-sonnet".into()).unwrap();
+        assert_eq!(result["name"], "Claude 3.5 Sonnet");
+    }
+
+    #[test]
+    fn show_entity_returns_error_for_missing_model() {
+        let _g = crate::test_support::env_lock();
+        let _tmp = crate::test_support::point_registry_at_temp();
+
+        let err = show_entity("model".into(), "ghost".into()).unwrap_err();
+        assert!(err.contains("no such model ghost"), "got: {err}");
+    }
+
+    #[test]
+    fn show_entity_returns_specialist_definition() {
+        let _g = crate::test_support::env_lock();
+        let _tmp = crate::test_support::point_registry_at_temp();
+
+        let mut reg = spawningpool::Registry::default();
+        reg.specialists.insert(
+            "summarizer".into(),
+            spawningpool::Specialist {
+                name: "summarizer".into(),
+                provider: "anthropic".into(),
+                model: "claude-3-5-sonnet".into(),
+                system_prompt: "Summarize the input.".into(),
+                tools: vec![],
+                constraint: None,
+                reasoning: spawningpool::ai::Reasoning::Off,
+                stream: false,
+            },
+        );
+        spawningpool::store::save(&reg).unwrap();
+
+        let result = show_entity("specialist".into(), "summarizer".into()).unwrap();
+        assert_eq!(result["name"], "summarizer");
+    }
+
+    #[test]
+    fn show_entity_returns_error_for_missing_specialist() {
+        let _g = crate::test_support::env_lock();
+        let _tmp = crate::test_support::point_registry_at_temp();
+
+        let err = show_entity("specialist".into(), "ghost".into()).unwrap_err();
+        assert!(err.contains("no such specialist ghost"), "got: {err}");
+    }
+
+    #[test]
     fn list_entities_reads_an_empty_registry() {
         let _g = crate::test_support::env_lock();
         let _tmp = crate::test_support::point_registry_at_temp();
