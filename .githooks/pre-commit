@@ -1,25 +1,38 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# The Tauri 'app' backend needs GTK/WebKit, which lightweight agent sandboxes
+# don't have (and can't apt-install). Lint/test it only where it can compile;
+# the UI render step below mocks the backend, so it doesn't need any of this.
+cargo_scope=(--workspace)
+if ! pkg-config --exists gdk-3.0 2>/dev/null; then
+  echo "note: GTK not found — excluding the Tauri 'app' backend from Rust checks." >&2
+  cargo_scope=(--workspace --exclude app)
+fi
+
 echo "--- fmt ---"
 cargo fmt --all -- --check
 
 echo "--- clippy ---"
-cargo clippy --all-targets --all-features -- -D warnings
+cargo clippy "${cargo_scope[@]}" --all-targets --all-features -- -D warnings
 
 echo "--- test ---"
-cargo test --all
+cargo test "${cargo_scope[@]}"
 
 # Render the desktop UI screenshots and publish them to a disposable side branch
 # on EVERY commit — they double as living proof of what the system renders, so
 # we keep them current regardless of what changed. The PR description embeds them
 # by stable URL (see app/README.md), so force-pushing a fresh set here is what
 # makes them "wipe and re-render" — no GitHub token needed, just the push
-# credentials git already has. Chrome is downloaded on first use.
+# credentials git already has.
+#
+# This step is strict: the SessionStart hook installs the frontend deps and
+# provisions the pinned Chrome up front, so anything failing here is a real
+# problem (a broken walkthrough, a UI regression, no network) and should block
+# the commit rather than silently leave the screenshots stale.
 
 # Publish app/media/screens/*.png to refs/heads/<media_branch> as a single
-# parentless commit (the previous screenshots are discarded). Best-effort:
-# a failure here (offline, no push rights) warns but never blocks the commit.
+# parentless commit; the force-push discards the previous screenshots.
 publish_screenshots() {
   local branch media_branch tree commit
   branch=$(git rev-parse --abbrev-ref HEAD)
@@ -29,40 +42,29 @@ publish_screenshots() {
   local pngs=(app/media/screens/*.png)
   shopt -u nullglob
   if [ ${#pngs[@]} -eq 0 ]; then
-    echo "  no screenshots to publish." >&2
-    return 0
+    echo "error: render produced no screenshots in app/media/screens/." >&2
+    return 1
   fi
 
   tree=$(
     for f in "${pngs[@]}"; do
       printf '100644 blob %s\t%s\n' "$(git hash-object -w "$f")" "$(basename "$f")"
     done | git mktree
-  ) || return 1
-  commit=$(echo "screenshots for $branch" | git commit-tree "$tree") || return 1
-
-  if git push -f origin "$commit:refs/heads/$media_branch" >/dev/null 2>&1; then
-    echo "  published ${#pngs[@]} screenshots to origin/$media_branch"
-  else
-    echo "  could not push screenshots to origin/$media_branch (offline?); skipping." >&2
-  fi
+  )
+  commit=$(echo "screenshots for $branch" | git commit-tree "$tree")
+  git push -f origin "$commit:refs/heads/$media_branch"
+  echo "  published ${#pngs[@]} screenshots to origin/$media_branch"
 }
 
 echo "--- render UI screenshots ---"
-if ! command -v npm >/dev/null 2>&1; then
-  echo "  npm not found; skipping render." >&2
-elif [ ! -d app/node_modules ]; then
-  echo "  app/node_modules missing; run 'npm --prefix app install'. Skipping render." >&2
-else
-  render_log=$(mktemp)
-  if npm --prefix app run render >"$render_log" 2>&1; then
-    publish_screenshots || echo "  publishing screenshots failed; skipping." >&2
-  elif grep -qiE "failed to download|could not (find|download)|ENOTFOUND|ETIMEDOUT|ECONNREFUSED|getaddrinfo|net::ERR|Host not in allowlist" "$render_log"; then
-    echo "  could not provision the browser (network); skipping render." >&2
-  else
-    echo "  render failed:" >&2
-    cat "$render_log" >&2
-    rm -f "$render_log"
-    exit 1
-  fi
-  rm -f "$render_log"
-fi
+command -v npm >/dev/null 2>&1 || {
+  echo "error: npm is required to render UI screenshots; install Node.js." >&2
+  exit 1
+}
+[ -d app/node_modules ] || {
+  echo "error: app/node_modules missing — run 'npm --prefix app install'" \
+       "(the SessionStart hook does this automatically)." >&2
+  exit 1
+}
+npm --prefix app run render
+publish_screenshots

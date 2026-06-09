@@ -50,7 +50,9 @@ Cloud agent sandboxes often block Playwright's browser CDN. To stay portable,
 the harness fetches **Chrome for Testing** (pinned in `e2e/browser.ts`) from
 the reachable Google Cloud Storage bucket on first run, caching it under
 `app/.browser` (gitignored). Nothing else is required — no `playwright install`,
-no system Chrome, no apt packages.
+no system Chrome, no apt packages. The SessionStart hook
+(`.claude/hooks/session-start.sh`) installs the frontend deps and provisions
+this Chrome up front, so a fresh agent session can render immediately.
 
 ### Screenshots in the PR
 
@@ -69,8 +71,9 @@ force-pushed so the previous set is discarded:
   `screenshots-<branch>` branch when the PR closes.
 
 This runs on every commit — the screenshots double as living proof of what the
-system renders, so they're kept current regardless of what changed. Rendering
-and publishing are best-effort: if the browser can't be provisioned or the push
-fails (offline), the hook warns and continues; only a genuine render failure
-(e.g. a renamed control breaking the walkthrough) fails the commit, so the
-screenshots can't silently go stale.
+system renders, so they're kept current regardless of what changed. It's strict:
+because the SessionStart hook guarantees the deps and browser are in place, a
+failure here is a real problem (a broken walkthrough, a UI regression, no
+network to push) and **fails the commit** rather than letting the screenshots
+silently go stale. The one place a commit now requires the network is the
+force-push of the screenshots branch.
