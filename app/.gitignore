@@ -1,0 +1,8 @@
+node_modules
+dist
+.vscode
+.vite
+.env
+.env.*
+!.env.example
+vite.config.ts.timestamp-*
