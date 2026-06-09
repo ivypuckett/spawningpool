@@ -10,7 +10,8 @@ export default defineConfig({
   fullyParallel: false,
   workers: 1,
   reporter: "list",
-  timeout: 60_000,
+  // Generous: the first run may download Chrome (~150 MB) before recording.
+  timeout: 300_000,
   webServer: {
     command: "npm run dev",
     url: "http://localhost:1420",

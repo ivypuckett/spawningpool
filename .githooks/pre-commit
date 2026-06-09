@@ -10,28 +10,28 @@ cargo clippy --all-targets --all-features -- -D warnings
 echo "--- test ---"
 cargo test --all
 
-# Re-render the desktop UI demo video, but only when a commit touches the
-# frontend that the recording shows. Rust-only commits skip this entirely.
+# Re-render the desktop UI visuals (screenshots + video), but only when a commit
+# touches the frontend they show. Rust-only commits skip this entirely. Chrome
+# is downloaded on first use, so a fresh clone may take a minute the first time.
 staged_frontend=$(git diff --cached --name-only --diff-filter=ACMR \
   | grep -E '^app/(src/|index\.html$|e2e/|playwright\.config\.ts$|svelte\.config\.js$|vite\.config\.ts$)' \
   || true)
 
 if [ -n "$staged_frontend" ]; then
-  echo "--- render demo video (frontend changed) ---"
+  echo "--- render UI visuals (frontend changed) ---"
   if ! command -v npm >/dev/null 2>&1; then
-    echo "  npm not found; skipping video render." >&2
+    echo "  npm not found; skipping render." >&2
   elif [ ! -d app/node_modules ]; then
-    echo "  app/node_modules missing; run 'npm --prefix app install'. Skipping video render." >&2
+    echo "  app/node_modules missing; run 'npm --prefix app install'. Skipping render." >&2
   else
     render_log=$(mktemp)
-    if npm --prefix app run render-video >"$render_log" 2>&1; then
-      git add app/media/spawningpool-demo.webm
-      echo "  updated app/media/spawningpool-demo.webm"
-    elif grep -qiE "playwright install|Executable doesn't exist" "$render_log"; then
-      echo "  Playwright browser not installed; run 'cd app && npx playwright install chromium'." >&2
-      echo "  Skipping video render." >&2
+    if npm --prefix app run render >"$render_log" 2>&1; then
+      git add app/media
+      echo "  updated app/media (screenshots + video)"
+    elif grep -qiE "failed to download|could not (find|download)|ENOTFOUND|ETIMEDOUT|ECONNREFUSED|getaddrinfo|net::ERR|Host not in allowlist" "$render_log"; then
+      echo "  could not provision the browser (network); skipping render." >&2
     else
-      echo "  video render failed:" >&2
+      echo "  render failed:" >&2
       cat "$render_log" >&2
       rm -f "$render_log"
       exit 1
