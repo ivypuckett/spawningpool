@@ -10,15 +10,12 @@ cargo clippy --all-targets --all-features -- -D warnings
 echo "--- test ---"
 cargo test --all
 
-# Re-render the desktop UI screenshots and publish them to a disposable side
-# branch, but only when a commit touches the frontend they show. Rust-only
-# commits skip this entirely. The PR description embeds these images by stable
-# URL (see app/README.md), so force-pushing fresh screenshots here is what makes
-# them "wipe and re-render" on every frontend change — no GitHub token needed,
-# just the push credentials git already has. Chrome is downloaded on first use.
-staged_frontend=$(git diff --cached --name-only --diff-filter=ACMR \
-  | grep -E '^app/(src/|index\.html$|e2e/|playwright\.config\.ts$|svelte\.config\.js$|vite\.config\.ts$)' \
-  || true)
+# Render the desktop UI screenshots and publish them to a disposable side branch
+# on EVERY commit — they double as living proof of what the system renders, so
+# we keep them current regardless of what changed. The PR description embeds them
+# by stable URL (see app/README.md), so force-pushing a fresh set here is what
+# makes them "wipe and re-render" — no GitHub token needed, just the push
+# credentials git already has. Chrome is downloaded on first use.
 
 # Publish app/media/screens/*.png to refs/heads/<media_branch> as a single
 # parentless commit (the previous screenshots are discarded). Best-effort:
@@ -50,24 +47,22 @@ publish_screenshots() {
   fi
 }
 
-if [ -n "$staged_frontend" ]; then
-  echo "--- render UI screenshots (frontend changed) ---"
-  if ! command -v npm >/dev/null 2>&1; then
-    echo "  npm not found; skipping render." >&2
-  elif [ ! -d app/node_modules ]; then
-    echo "  app/node_modules missing; run 'npm --prefix app install'. Skipping render." >&2
+echo "--- render UI screenshots ---"
+if ! command -v npm >/dev/null 2>&1; then
+  echo "  npm not found; skipping render." >&2
+elif [ ! -d app/node_modules ]; then
+  echo "  app/node_modules missing; run 'npm --prefix app install'. Skipping render." >&2
+else
+  render_log=$(mktemp)
+  if npm --prefix app run render >"$render_log" 2>&1; then
+    publish_screenshots || echo "  publishing screenshots failed; skipping." >&2
+  elif grep -qiE "failed to download|could not (find|download)|ENOTFOUND|ETIMEDOUT|ECONNREFUSED|getaddrinfo|net::ERR|Host not in allowlist" "$render_log"; then
+    echo "  could not provision the browser (network); skipping render." >&2
   else
-    render_log=$(mktemp)
-    if npm --prefix app run render >"$render_log" 2>&1; then
-      publish_screenshots || echo "  publishing screenshots failed; skipping." >&2
-    elif grep -qiE "failed to download|could not (find|download)|ENOTFOUND|ETIMEDOUT|ECONNREFUSED|getaddrinfo|net::ERR|Host not in allowlist" "$render_log"; then
-      echo "  could not provision the browser (network); skipping render." >&2
-    else
-      echo "  render failed:" >&2
-      cat "$render_log" >&2
-      rm -f "$render_log"
-      exit 1
-    fi
+    echo "  render failed:" >&2
+    cat "$render_log" >&2
     rm -f "$render_log"
+    exit 1
   fi
+  rm -f "$render_log"
 fi

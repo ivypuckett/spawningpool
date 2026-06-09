@@ -55,21 +55,22 @@ no system Chrome, no apt packages.
 ### Screenshots in the PR
 
 The screenshots aren't committed to the branch (they'd churn the diff and
-outlive the PR). Instead the pre-commit hook publishes them, on any frontend
-change, as a single parentless commit on a disposable side branch
-`screenshots-<branch>`, force-pushed so the previous set is discarded:
+outlive the PR). Instead the pre-commit hook publishes them, on **every commit**,
+as a single parentless commit on a disposable side branch `screenshots-<branch>`,
+force-pushed so the previous set is discarded:
 
 - The PR description embeds those images by **stable URL**
-  (`…/blob/screenshots-<branch>/01-overview.png?raw=true`), which renders inline
-  for collaborators even on a private repo. Because the URL is stable and the
-  hook force-pushes fresh images, the pictures refresh on every frontend commit
-  with no GitHub token — just the push credentials git already has.
+  (`https://raw.githubusercontent.com/<owner>/<repo>/screenshots-<branch>/01-overview.png`).
+  Because the URL is stable and the hook force-pushes fresh images, the pictures
+  refresh on every commit with no GitHub token — just the push credentials git
+  already has. (Public repo, so plain `raw.githubusercontent.com` URLs render
+  inline.)
 - Set the PR body once (it references the stable URLs); delete the
   `screenshots-<branch>` branch when the PR closes.
 
-Only frontend commits trigger this (`app/src/`, `app/index.html`, `app/e2e/`,
-or the Playwright/Vite/Svelte config); Rust-only commits skip it. Rendering and
-publishing are best-effort — if the browser can't be provisioned or the push
+This runs on every commit — the screenshots double as living proof of what the
+system renders, so they're kept current regardless of what changed. Rendering
+and publishing are best-effort: if the browser can't be provisioned or the push
 fails (offline), the hook warns and continues; only a genuine render failure
 (e.g. a renamed control breaking the walkthrough) fails the commit, so the
 screenshots can't silently go stale.
