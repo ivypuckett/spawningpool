@@ -15,6 +15,9 @@ export default defineConfig({
     watch: { ignored: ["**/src-tauri/**"] },
   },
   test: {
+    // Unit tests live in src/. The Playwright video render under e2e/ is a
+    // separate suite (`npm run render-video`) and must not be picked up here.
+    include: ["src/**/*.{test,spec}.{ts,js}"],
     environment: "jsdom",
     globals: true,
     setupFiles: ["./src/test-setup.ts"],
