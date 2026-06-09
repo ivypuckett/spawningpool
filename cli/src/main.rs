@@ -52,23 +52,36 @@ enum Command {
 
 #[derive(Subcommand)]
 enum ListKind {
+    #[command(aliases = ["specialist", "lenny", "ling", "lennys", "lings"])]
     Specialists,
+    #[command(alias = "provider")]
     Providers,
+    #[command(alias = "model")]
     Models {
         /// Discover the models a running LM Studio server currently has loaded
         /// (at `$LMSTUDIO_BASE_URL`) instead of listing the registry.
         #[arg(long)]
         remote: bool,
     },
+    #[command(alias = "tool")]
     Tools,
 }
 
 #[derive(Subcommand)]
 enum ShowEntity {
-    Specialist { name: String },
-    Provider { name: String },
-    Model { name: String },
-    Tool { name: String },
+    #[command(aliases = ["lenny", "ling"])]
+    Specialist {
+        name: String,
+    },
+    Provider {
+        name: String,
+    },
+    Model {
+        name: String,
+    },
+    Tool {
+        name: String,
+    },
 }
 
 #[derive(Subcommand)]
@@ -102,6 +115,7 @@ enum DefineEntity {
         context_window: u32,
     },
     /// Define a specialist template.
+    #[command(aliases = ["lenny", "ling"])]
     Specialist {
         name: String,
         #[arg(long)]
@@ -133,10 +147,19 @@ enum DefineEntity {
 
 #[derive(Subcommand)]
 enum DeleteEntity {
-    Specialist { name: String },
-    Provider { name: String },
-    Model { name: String },
-    Tool { name: String },
+    #[command(aliases = ["lenny", "ling"])]
+    Specialist {
+        name: String,
+    },
+    Provider {
+        name: String,
+    },
+    Model {
+        name: String,
+    },
+    Tool {
+        name: String,
+    },
 }
 
 #[tokio::main]
