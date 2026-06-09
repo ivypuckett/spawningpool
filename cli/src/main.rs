@@ -52,7 +52,7 @@ enum Command {
 
 #[derive(Subcommand)]
 enum ListKind {
-    #[command(aliases = ["lenny", "ling"])]
+    #[command(aliases = ["lenny", "ling", "lennys", "lings"])]
     Specialists,
     Providers,
     Models {
