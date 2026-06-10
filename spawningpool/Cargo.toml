@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2021"
 description = "Create hyper-specific, 0-waste agents"
 license = "MIT"
+repository = "https://github.com/ivypuckett/spawningpool"
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }
