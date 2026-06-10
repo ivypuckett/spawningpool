@@ -26,12 +26,21 @@ the exact next command.
 
 ## Quickstart
 
-### 0. Build and put `sp` on your PATH
+### 0. Install and put `sp` on your PATH
+
+Requires the Rust toolchain (`cargo`); the binary is compiled on install.
 
 ```sh
-git clone <repo-url> spawningpool && cd spawningpool
+cargo install spawningpool-cli
+# Installs a `spawningpool` binary into ~/.cargo/bin. Its CLI name is `sp`. Alias it:
+alias sp="spawningpool"
+```
+
+Or build from source:
+
+```sh
+git clone https://github.com/ivypuckett/spawningpool spawningpool && cd spawningpool
 cargo build --release
-# The binary is `spawningpool`; its CLI name is `sp`. Alias it:
 alias sp="$PWD/target/release/spawningpool"
 ```
 
