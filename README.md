@@ -78,7 +78,37 @@ sp list tools
 # discover the models a running LM Studio server currently has loaded
 # (at $LMSTUDIO_BASE_URL, default http://localhost:1234) instead of the registry
 sp list models --remote
+
+# browse and manage everything in an interactive terminal UI
+sp tui
 ```
+
+### TUI
+
+`sp tui` opens a Ratatui terminal UI over the same registry the commands above
+manage. Three tabs — **Providers**, **Specialists**, **Tools** — are vim- and
+mouse-navigable; it starts on Specialists with the first one focused. Providers
+nest into their models (move right on a provider to drill into its models, left
+to go back); specialists and tools are flat.
+
+| Key | Action |
+| --- | --- |
+| `p` / `s` / `t` | jump to providers / specialists / tools |
+| `h j k l`, arrows | navigate — left goes back a breadcrumb, right drills in (or opens a leaf) |
+| `enter` | into a folder, or open the selected file |
+| `a` | add (registry entities are scaffolded then opened in `$EDITOR`; tools get a template script) |
+| `o` | open — chat with a specialist, run a tool, or open a provider's console |
+| `e` | edit in `$EDITOR` |
+| `r` | rename |
+| `d` | delete (confirms `y`/`n`) |
+| `/` | search the current view; `enter` keeps the filter, `esc` clears it |
+| `ctrl+r` | refresh from disk |
+| `?` | help |
+| `q`, `ctrl+c`, `ctrl+d` | quit |
+
+Editing opens `$VISUAL`/`$EDITOR` (falling back to `vi`). When run inside Zellij,
+tmux, or Kitty, a tool's script opens in a new pane; otherwise the editor takes
+over the terminal until you close it.
 
 ### Providers
 
