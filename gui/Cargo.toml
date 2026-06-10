@@ -1,0 +1,15 @@
+[package]
+name = "spawningpool-gui"
+version = "0.1.0"
+edition = "2021"
+description = "Proof-of-concept iced UI with headless snapshot tests"
+license = "MIT"
+
+[dependencies]
+# Render with the software (tiny-skia) backend only — no wgpu/GPU. The x11 and
+# wayland features stay on so the winit windowing shell (and its softbuffer
+# dependency) compiles; the snapshot tests never open a real window.
+iced = { version = "0.14", default-features = false, features = ["tiny-skia", "x11", "wayland", "thread-pool"] }
+
+[dev-dependencies]
+iced_test = "0.14"

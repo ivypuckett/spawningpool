@@ -2,5 +2,6 @@
 members = [
     "spawningpool",
     "cli",
+    "gui",
 ]
 resolver = "2"
