@@ -11,6 +11,8 @@ use spawningpool::{
 use std::collections::HashMap;
 use std::io::Write;
 
+mod tui;
+
 #[derive(Parser)]
 #[command(name = "sp", bin_name = "spawningpool", version, about)]
 struct Cli {
@@ -48,6 +50,8 @@ enum Command {
         #[command(subcommand)]
         entity: DeleteEntity,
     },
+    /// Browse and manage everything in an interactive terminal UI.
+    Tui,
 }
 
 #[derive(Subcommand)]
@@ -180,6 +184,7 @@ async fn run(cli: Cli) -> Result<(), String> {
         Some(Command::Show { entity }) => show(entity),
         Some(Command::Define { entity }) => define(entity),
         Some(Command::Delete { entity }) => delete(entity),
+        Some(Command::Tui) => tui::launch().await,
     }
 }
 
