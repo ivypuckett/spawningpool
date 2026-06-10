@@ -151,7 +151,6 @@ against the tool's JSON Schema and feeds violations back to the model to retry.
 1. **Rust:** Catches the most bugs at compile time.
 2. **Plain scripts as tools:** a tool is just an executable script with a small `# desc:`/`# params:` header. No external task runner, no YAML, no extra dependency — and the script stays runnable and testable on its own. Inputs arrive as environment variables, keeping execution injection-free.
 3. **Clap:** CLI parsing. Necessary for the first version, complete integration testing, and model calling.
-4. **Tauri:** Visual app — **not yet implemented.** Planned past version one, once it's ready to be used by humans.
 
 ## Inspirations
 

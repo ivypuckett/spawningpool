@@ -7,15 +7,7 @@ Create hyper-specific, 0-waste agents.
 ```
 spawningpool/          # library crate — core logic and public API
 cli/                   # binary crate — consumes the library, named `spawningpool`
-app/                   # Tauri + Svelte desktop GUI for the library
 ```
-
-The `app/` GUI renders to deterministic screenshots via a Playwright harness
-that mocks the Tauri backend (`app/e2e/`, `npm --prefix app run render`) — see
-`app/README.md`. The pre-commit hook re-renders these on every commit and
-publishes them to a disposable `screenshots-<branch>` ref that the PR embeds;
-the SessionStart hook installs the frontend deps and provisions the pinned
-Chrome, so this works out of the box.
 
 ## Build & Test
 
@@ -37,8 +29,7 @@ hook does this automatically in web sessions):
 git config core.hooksPath .githooks
 ```
 
-The pre-commit hook runs `cargo fmt --check`, `cargo clippy`, `cargo test`, and
-then renders + publishes the UI screenshots (see `app/README.md`).
+The pre-commit hook runs `cargo fmt --check`, `cargo clippy`, and `cargo test`.
 
 ---
 
