@@ -135,7 +135,7 @@ pub fn run_script(
     for (key, value) in args {
         cmd.env(key, value);
     }
-    let output = cmd.output()?;
+    let output = run_with_etxtbsy_retry(&mut cmd)?;
 
     let mut combined = String::from_utf8_lossy(&output.stdout).into_owned();
     let stderr = String::from_utf8_lossy(&output.stderr);
@@ -150,6 +150,30 @@ pub fn run_script(
         success: output.status.success(),
         output: combined,
     })
+}
+
+/// Run a command, retrying briefly on `ETXTBSY` ("text file busy").
+///
+/// Exec-ing a freshly written script can transiently fail this way: if another
+/// thread `fork`s (e.g. spawns its own process) in the window between the file
+/// being created and its write handle closing, the child inherits that write
+/// fd, and the kernel refuses to exec a file open for writing until the child
+/// goes away. It's a race, not a real error — common when a tool script was
+/// just scaffolded — so a few short retries clear it.
+fn run_with_etxtbsy_retry(cmd: &mut Command) -> std::io::Result<std::process::Output> {
+    use std::io::ErrorKind;
+
+    const MAX_RETRIES: u32 = 5;
+    let mut attempt = 0;
+    loop {
+        match cmd.output() {
+            Err(e) if e.kind() == ErrorKind::ExecutableFileBusy && attempt < MAX_RETRIES => {
+                attempt += 1;
+                std::thread::sleep(std::time::Duration::from_millis(10 * u64::from(attempt)));
+            }
+            other => return other,
+        }
+    }
 }
 
 #[cfg(test)]
