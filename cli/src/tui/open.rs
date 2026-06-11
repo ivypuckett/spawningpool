@@ -18,9 +18,7 @@ pub struct EditorLaunch {
 /// Resolve the editor command for `file`, choosing a multiplexer pane when we're
 /// inside one. `env` looks up an environment variable (injected for testing).
 pub fn editor_launch(file: &str, env: impl Fn(&str) -> Option<String>) -> EditorLaunch {
-    let editor = env("VISUAL")
-        .or_else(|| env("EDITOR"))
-        .unwrap_or_else(|| "vi".to_string());
+    let editor = resolve_editor(&env);
 
     // Zellij first, then tmux, then Kitty — each opens a fresh pane so the TUI
     // keeps running. A plain terminal runs the editor inline.
@@ -65,6 +63,23 @@ pub fn editor_launch(file: &str, env: impl Fn(&str) -> Option<String>) -> Editor
             inline: true,
         }
     }
+}
+
+/// The editor command name: `$VISUAL`, then `$EDITOR`, then `vi`.
+fn resolve_editor(env: &impl Fn(&str) -> Option<String>) -> String {
+    env("VISUAL")
+        .or_else(|| env("EDITOR"))
+        .unwrap_or_else(|| "vi".to_string())
+}
+
+/// The argv to run the user's editor *inline* — taking over this terminal,
+/// never a multiplexer pane. Round-trip JSON edits need this: the caller must
+/// block until the editor exits before re-reading the file, which a detached
+/// pane (the command returns immediately) would defeat — the temp file gets
+/// read back and deleted out from under the still-opening editor, so the edit
+/// is lost and the editor shows a blank buffer.
+pub fn inline_editor(file: &str, env: impl Fn(&str) -> Option<String>) -> Vec<String> {
+    vec![resolve_editor(&env), file.to_string()]
 }
 
 /// The command to open `url` in the platform's default handler. macOS uses
@@ -132,5 +147,19 @@ mod tests {
         assert_eq!(launch.argv[0], "kitty");
         assert!(launch.argv.contains(&"launch".to_string()));
         assert!(!launch.inline);
+    }
+
+    #[test]
+    fn inline_editor_ignores_multiplexers() {
+        // Even inside a multiplexer, an inline edit must run the editor directly
+        // (the caller blocks on it), never a detached pane.
+        let argv = inline_editor(
+            "/tmp/sp-edit.json",
+            env_of(&[("ZELLIJ", "0"), ("TMUX", "/tmp/t"), ("EDITOR", "hx")]),
+        );
+        assert_eq!(argv, vec!["hx", "/tmp/sp-edit.json"]);
+        // Falls back through VISUAL -> EDITOR -> vi just like editor_launch.
+        let bare = inline_editor("/f", env_of(&[]));
+        assert_eq!(bare, vec!["vi", "/f"]);
     }
 }
