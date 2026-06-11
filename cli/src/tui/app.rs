@@ -2,7 +2,7 @@
 //! commands (add/edit/delete/rename/open). Deliberately pure — it owns an
 //! in-memory [`Registry`] snapshot and turns key/mouse events into state
 //! changes, never touching the terminal. Side effects that *can't* be pure
-//! (spawning `$EDITOR`, running a specialist, opening a provider's console) are
+//! (spawning `$EDITOR`, running a specialist) are
 //! emitted as an [`Action`] for the event loop to carry out, which is what keeps
 //! the whole thing testable against a `TestBackend`.
 
@@ -69,8 +69,6 @@ pub enum Action {
     OpenSpecialist(String),
     /// Run a tool's script directly.
     RunTool(String),
-    /// Open a provider's console (its `base_url`) in the browser.
-    OpenProvider(String),
     /// Edit an entity in `$EDITOR`: a registry entity as JSON, or a tool's
     /// script in place.
     Edit(EditTarget),
@@ -194,14 +192,6 @@ impl App {
     /// Set the transient status line (used by the loop to report action errors).
     pub fn set_status(&mut self, message: String) {
         self.status = Some(message);
-    }
-
-    /// A provider's configured `base_url`, for the "open console" action.
-    pub fn provider_base_url(&self, name: &str) -> Option<String> {
-        self.registry
-            .providers
-            .get(name)
-            .map(|p| p.base_url.clone())
     }
 
     pub fn should_quit(&self) -> bool {
@@ -460,17 +450,16 @@ impl App {
     /// Right drills a provider into its models, or — on a leaf (model,
     /// specialist, tool) — opens it, exactly as `o` would.
     fn move_right(&mut self) {
-        match self.level() {
-            Level::Providers => {
-                if let Some(name) = self.current() {
-                    self.parked_selected = self.selected;
-                    self.drill = Some(name);
-                    self.selected = 0;
-                    self.filter.clear();
-                }
-            }
-            _ => self.open_current(),
-        }
+        self.open_current();
+    }
+
+    /// Drill the provider list into `name`'s models, parking the provider
+    /// cursor so `left` can restore it.
+    fn drill_into(&mut self, name: String) {
+        self.parked_selected = self.selected;
+        self.drill = Some(name);
+        self.selected = 0;
+        self.filter.clear();
     }
 
     fn clamp_selection(&mut self) {
@@ -484,14 +473,14 @@ impl App {
 
     // ---- commands -------------------------------------------------------
 
-    /// `o` / right-on-leaf: open the current item per its kind. A provider
-    /// opens its console; a model is edited; a specialist runs; a tool runs.
+    /// `o` / right: open the current item per its kind. A provider drills into
+    /// its models; a model is edited; a specialist runs; a tool runs.
     fn open_current(&mut self) {
         let Some(name) = self.current() else {
             return;
         };
         self.pending = Some(match self.level() {
-            Level::Providers => Action::OpenProvider(name),
+            Level::Providers => return self.drill_into(name),
             Level::Models(_) => Action::Edit(EditTarget::Model(name)),
             Level::Specialists => Action::OpenSpecialist(name),
             Level::Tools => Action::RunTool(name),
@@ -859,7 +848,7 @@ pub(crate) mod tests {
 
     #[test]
     fn right_on_provider_is_not_open() {
-        // Drilling must not emit an open action — that distinction matters.
+        // Drilling into a provider navigates; it must not emit a side-effect action.
         let mut app = sample();
         app.on_key(key('p'));
         app.on_key(key('l'));
@@ -867,14 +856,14 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn open_provider_emits_open_action() {
+    fn open_on_a_provider_drills_into_its_models() {
+        // `o` on a provider drills into its models (like Enter/right), not an
+        // action — a provider's base_url is an API endpoint, not a web page.
         let mut app = sample();
         app.on_key(key('p'));
         app.on_key(key('o'));
-        assert_eq!(
-            app.take_action(),
-            Some(Action::OpenProvider("anthropic".into()))
-        );
+        assert_eq!(app.take_action(), None);
+        assert_eq!(app.level(), Level::Models("anthropic".into()));
     }
 
     #[test]

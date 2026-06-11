@@ -82,17 +82,6 @@ pub fn inline_editor(file: &str, env: impl Fn(&str) -> Option<String>) -> Vec<St
     vec![resolve_editor(&env), file.to_string()]
 }
 
-/// The command to open `url` in the platform's default handler. macOS uses
-/// `open`; elsewhere `xdg-open`.
-pub fn open_url_command(url: &str) -> Vec<String> {
-    let opener = if cfg!(target_os = "macos") {
-        "open"
-    } else {
-        "xdg-open"
-    };
-    vec![opener.to_string(), url.to_string()]
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
