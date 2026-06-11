@@ -446,10 +446,14 @@ impl App {
     /// Left pops out of a provider's models back to the provider list; at any
     /// root it does nothing.
     fn move_left(&mut self) {
-        if matches!(self.level(), Level::Models(_)) {
+        if let Level::Models(provider) = self.level() {
             self.drill = None;
-            self.selected = self.parked_selected;
             self.filter.clear();
+            // Restore the cursor onto the provider we drilled into by name, not
+            // a parked index: the index was taken against the (possibly
+            // filtered) list at drill time and won't line up with the full list
+            // we're popping back to.
+            self.select_by_name(&provider);
         }
     }
 
@@ -533,6 +537,9 @@ impl App {
         if name.is_empty() {
             return;
         }
+        // Drop any active filter so the entity we're about to create is visible
+        // (and can be selected) rather than hidden behind a stale search.
+        self.filter.clear();
         match self.level() {
             Level::Providers => {
                 let def = ProviderDef {
@@ -1077,5 +1084,113 @@ pub(crate) mod tests {
         assert_eq!(app.level(), Level::Specialists);
         app.on_key(key('p')); // back to providers, no longer drilled
         assert_eq!(app.level(), Level::Providers);
+    }
+
+    // ---- bug-bash exploratory probes ------------------------------------
+    // These assert the behaviour a user would intuitively expect. Ones that
+    // fail are pointing at real bugs.
+
+    /// Control: drilling without a filter and popping back lands on the
+    /// provider you went into.
+    #[test]
+    fn drill_without_filter_pops_back_onto_the_drilled_provider() {
+        let mut app = sample();
+        app.on_key(key('p')); // providers: [anthropic, lmstudio]
+        app.on_key(key('j')); // select lmstudio
+        app.on_key(key('l')); // drill in
+        app.on_key(key('h')); // pop back
+        assert_eq!(app.current().as_deref(), Some("lmstudio"));
+    }
+
+    /// Regression: with a filter active, drilling into the only match and
+    /// popping back used to jump the cursor to the wrong provider — the parked
+    /// index was taken against the *filtered* list but restored against the full
+    /// one. Popping now restores by the drilled provider's name.
+    #[test]
+    fn drill_after_filtering_pops_back_onto_the_drilled_provider() {
+        let mut app = sample();
+        app.on_key(key('p')); // providers: [anthropic, lmstudio]
+        app.on_key(key('/'));
+        for c in "lm".chars() {
+            app.on_key(key(c));
+        }
+        assert_eq!(app.items(), vec!["lmstudio"]);
+        app.on_key(code(KeyCode::Enter)); // apply filter
+        app.on_key(key('l')); // drill into lmstudio
+        assert_eq!(app.level(), Level::Models("lmstudio".into()));
+        app.on_key(key('h')); // pop back
+        assert_eq!(app.level(), Level::Providers);
+        assert_eq!(app.current().as_deref(), Some("lmstudio"));
+    }
+
+    /// Regression: adding an entity while a filter was active that excluded the
+    /// new name used to leave it hidden and the cursor stranded, even though it
+    /// was saved. Adding now clears the filter so the new entity is selected.
+    #[test]
+    fn adding_while_filtered_reveals_and_selects_the_new_entity() {
+        let dir = std::env::temp_dir().join(format!("sp_tui_addf_{}", std::process::id()));
+        let path = dir.join("registry.json");
+        let mut app = sample();
+        app.registry_path = path;
+        // Filter specialists to "rou" (only "router").
+        app.on_key(key('/'));
+        for c in "rou".chars() {
+            app.on_key(key(c));
+        }
+        app.on_key(code(KeyCode::Enter));
+        // Add a specialist whose name doesn't match the filter.
+        app.on_key(key('a'));
+        for c in "grader".chars() {
+            app.on_key(key(c));
+        }
+        app.on_key(code(KeyCode::Enter));
+        assert_eq!(app.current().as_deref(), Some("grader"));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// Control: the filter matches case-insensitively.
+    #[test]
+    fn filter_is_case_insensitive() {
+        let mut app = sample();
+        app.on_key(key('/'));
+        for c in "ROU".chars() {
+            app.on_key(key(c));
+        }
+        assert_eq!(app.items(), vec!["router"]);
+    }
+
+    /// Probe: renaming the sole filtered match to a name that still matches
+    /// keeps it selected.
+    #[test]
+    fn renaming_filtered_match_keeps_it_selected() {
+        let dir = std::env::temp_dir().join(format!("sp_tui_renf_{}", std::process::id()));
+        let path = dir.join("registry.json");
+        let mut app = sample();
+        app.registry_path = path;
+        app.on_key(key('/'));
+        for c in "rou".chars() {
+            app.on_key(key(c));
+        }
+        app.on_key(code(KeyCode::Enter)); // filter -> [router]
+        app.on_key(key('r'));
+        if let Mode::Rename(_) = app.mode() {
+            app.mode = Mode::Rename("routerz".into());
+        }
+        app.on_key(code(KeyCode::Enter));
+        assert_eq!(app.current().as_deref(), Some("routerz"));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// Control: opening a model queues an edit of that model.
+    #[test]
+    fn open_model_edits_it() {
+        let mut app = sample();
+        app.on_key(key('p'));
+        app.on_key(key('l')); // drill into anthropic's models
+        app.on_key(key('o')); // open the first model
+        assert_eq!(
+            app.take_action(),
+            Some(Action::Edit(EditTarget::Model("claude-haiku".into())))
+        );
     }
 }
