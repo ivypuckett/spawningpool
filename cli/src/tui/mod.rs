@@ -189,7 +189,13 @@ fn open_provider(app: &App, name: &str) -> Result<(), String> {
         return Err(format!("provider '{name}' has no base_url set yet"));
     }
     let argv = open::open_url_command(&url);
-    spawn_wait(&argv).map_err(|e| format!("couldn't open {url}: {e}"))
+    // Fire-and-forget: a browser opener can be slow, hang, or even crash (e.g.
+    // a KDE `kde-open` aborting on a dead endpoint). Blocking on it — or letting
+    // its output inherit our stdio — would freeze and corrupt the TUI, so we
+    // detach and don't wait.
+    spawn_detached(&argv)
+        .map(|_| ())
+        .map_err(|e| format!("couldn't open {url}: {e}"))
 }
 
 /// Edit an entity. Tools are scripts edited in place (in a multiplexer pane when
@@ -343,6 +349,21 @@ fn spawn_wait(argv: &[String]) -> io::Result<()> {
             "command exited with status {status}"
         )))
     }
+}
+
+/// Spawn `argv` as a detached, fire-and-forget process: stdio is sent to null
+/// (so a chatty or crashing child can't corrupt our alternate screen) and we
+/// don't wait for it to exit. The returned [`Child`] is normally dropped, which
+/// on Unix simply releases our handle without killing or reaping it.
+///
+/// [`Child`]: std::process::Child
+fn spawn_detached(argv: &[String]) -> io::Result<std::process::Child> {
+    std::process::Command::new(&argv[0])
+        .args(&argv[1..])
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
 }
 
 /// Print a prompt and read a line from stdin (used while suspended). Returns
@@ -514,5 +535,25 @@ mod tests {
         assert_eq!(tab_at_x(13), Some(1));
         // Far right is past the tools chip.
         assert_eq!(tab_at_x(200), None);
+    }
+
+    /// Opening a provider's console must be fire-and-forget: a slow, hanging, or
+    /// crashing browser opener must not block the event loop. Regression test
+    /// for the freeze where a crashing `kde-open` left the TUI unresponsive and
+    /// unable to quit. We stand in for the opener with a long `sleep` and assert
+    /// the spawn returns promptly instead of waiting for it.
+    #[test]
+    fn spawn_detached_does_not_wait_for_the_child() {
+        let argv = vec!["sleep".to_string(), "30".to_string()];
+        let start = std::time::Instant::now();
+        let mut child = spawn_detached(&argv).expect("spawn should succeed");
+        let elapsed = start.elapsed();
+        // Don't leave the stand-in opener running past the test.
+        child.kill().ok();
+        child.wait().ok();
+        assert!(
+            elapsed < Duration::from_secs(5),
+            "spawn_detached blocked for {elapsed:?} instead of returning immediately"
+        );
     }
 }
