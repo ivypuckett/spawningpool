@@ -186,19 +186,6 @@ against the tool's JSON Schema and feeds violations back to the model to retry.
 
 - **pi SDK:** an excellent SDK we drew from, but not used as a dependency — it does not support constrained decoding, which is a core feature here.
 
-## Phases
-
-1. Install the above technologies into a hello-world project.
-2. `spawningpool list providers`, `models`
-3. `spawningpool define provider`
-4. `spawningpool list specialists`
-5. `spawningpool define model`
-6. `spawningpool define specialist`
-7. `spawningpool run specialist`
-8. `spawningpool list tools`
-9. `spawningpool define tool`
-10. `spawningpool delete *`
-
 ## Simplifications
 
 - A chain is a sequence/selection/iteration of specialists. Bash and scripting allows for this and provides an existing abstraction/entry point. The project does not prioritize shared memory. Therefore, bash is sufficient. If better tooling is desired, LangGraph and Mastra have both invested in this space and could be used alongside it.
