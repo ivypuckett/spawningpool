@@ -3,7 +3,7 @@
 //! The location is `$SPAWNINGPOOL_HOME/registry.json` (default
 //! `~/.spawningpool/registry.json`), or the exact path in `$SPAWNINGPOOL_REGISTRY`
 //! when set. A missing file loads as an empty registry, so the first write
-//! creates it. Both `sp` and any other front-end share this module so they read
+//! creates it. Both `spawningpool` and any other front-end share this module so they read
 //! and write the registry through one path-resolution policy.
 
 use std::path::{Path, PathBuf};

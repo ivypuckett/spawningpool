@@ -2,8 +2,8 @@
 //! runtime [`crate::ai`] types.
 //!
 //! Nothing here talks to a provider or the filesystem. A [`ProviderDef`]/
-//! [`ModelDef`]/[`Specialist`] is plain, serializable data that `sp define`
-//! writes and `sp list` reads. The bridges ([`ModelDef::resolve`],
+//! [`ModelDef`]/[`Specialist`] is plain, serializable data that `spawningpool define`
+//! writes and `spawningpool list` reads. The bridges ([`ModelDef::resolve`],
 //! [`Registry::resolve_model`]) lower these definitions into the [`ai::Model`]
 //! the client executes. Tools are the exception: they live as scripts in a
 //! folder (see [`crate::tools`]), not in the [`Registry`], so a [`ToolDef`] here
@@ -59,7 +59,7 @@ pub struct Referrer {
     pub name: String,
 }
 
-/// A defined provider (`sp define provider`): a name bound to a wire protocol,
+/// A defined provider (`spawningpool define provider`): a name bound to a wire protocol,
 /// endpoint, and the env var holding its API key. Generalizes the catalog's
 /// hard-coded "anthropic"/"lmstudio".
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -79,7 +79,7 @@ pub struct ProviderDef {
     pub constrained_decoding: bool,
 }
 
-/// A defined model (`sp define model`). Per option A it names its provider and
+/// A defined model (`spawningpool define model`). Per option A it names its provider and
 /// inherits that provider's `api`/`base_url`; only the model-specific limits
 /// live here.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -107,7 +107,7 @@ impl ModelDef {
     }
 }
 
-/// A defined specialist (`sp define specialist`): the (provider, model, system prompt,
+/// A defined specialist (`spawningpool define specialist`): the (provider, model, system prompt,
 /// tools) template that gets instantiated with a user prompt and called.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Specialist {
@@ -186,7 +186,7 @@ impl Specialist {
 /// A tool, backed by one executable script in the [`crate::tools`] folder. The
 /// script's `# desc:` header becomes the description and its `# params:` header
 /// the parameters — see [`crate::summarize`]. This is a derived view read from
-/// the script, not persisted data; only [`Serialize`] is needed, for `sp show`.
+/// the script, not persisted data; only [`Serialize`] is needed, for `spawningpool show`.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct ToolDef {
     pub name: String,
@@ -216,7 +216,7 @@ impl ToolDef {
     }
 }
 
-/// The on-disk catalog backing `sp define` / `sp list` / `sp delete`. Tools
+/// The on-disk catalog backing `spawningpool define` / `spawningpool list` / `spawningpool delete`. Tools
 /// aren't here — they live as scripts in the [`crate::tools`] folder.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Registry {
@@ -244,7 +244,7 @@ impl Registry {
 
     /// The first reference a model makes that the registry can't resolve — only
     /// its provider — or `None` when every reference is satisfied. The gate
-    /// `sp define` (or a UI) runs before persisting a model.
+    /// `spawningpool define` (or a UI) runs before persisting a model.
     pub fn missing_model_ref(&self, model: &ModelDef) -> Option<MissingRef> {
         if !self.providers.contains_key(&model.provider) {
             return Some(MissingRef {

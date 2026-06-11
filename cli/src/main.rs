@@ -1,4 +1,4 @@
-//! `sp` — the spawningpool CLI. Defines providers, models, specialists, and tools
+//! The `spawningpool` CLI. Defines providers, models, specialists, and tools
 //! into a persisted [`Registry`], and runs a specialist against a prompt.
 
 use std::path::{Path, PathBuf};
@@ -14,7 +14,7 @@ use std::io::Write;
 mod tui;
 
 #[derive(Parser)]
-#[command(name = "sp", bin_name = "spawningpool", version, about)]
+#[command(name = "spawningpool", bin_name = "spawningpool", version, about)]
 struct Cli {
     #[command(subcommand)]
     command: Option<Command>,
@@ -176,7 +176,7 @@ async fn main() {
 
 async fn run(cli: Cli) -> Result<(), String> {
     match cli.command {
-        // Bare `sp` reads where you are in the provider → model → specialist →
+        // Bare `spawningpool` reads where you are in the provider → model → specialist →
         // run progression and shows the next step.
         None => status(),
         Some(Command::Run { specialist, prompt }) => run_specialist(&specialist, &prompt).await,
@@ -243,16 +243,16 @@ fn empty_state() -> String {
         "Step 1: define a provider — the API your specialists talk to. Pick one:",
         "",
         "  Anthropic (Claude, hosted):",
-        "      sp define provider anthropic --api anthropic-messages \\",
+        "      spawningpool define provider anthropic --api anthropic-messages \\",
         "        --base-url https://api.anthropic.com --api-key-env ANTHROPIC_API_KEY",
         "",
         "  LM Studio (local, OpenAI-compatible):",
-        "      sp define provider lmstudio --api openai-completions \\",
+        "      spawningpool define provider lmstudio --api openai-completions \\",
         "        --base-url http://localhost:1234/v1",
         "      (add --constrained-decoding if the server supports it, for a hard",
         "       guarantee on a specialist's forced tool call.)",
         "",
-        "Then run `sp` again for the next step.",
+        "Then run `spawningpool` again for the next step.",
     ]
     .join("\n")
 }
@@ -268,7 +268,7 @@ fn no_models_state(registry: &Registry) -> String {
         "Step 2: define a model under one of them.".to_string(),
         String::new(),
         "  Manually:".to_string(),
-        "      sp define model <id> --provider <provider> --max-tokens <n> --context-window <n>"
+        "      spawningpool define model <id> --provider <provider> --max-tokens <n> --context-window <n>"
             .to_string(),
     ];
     // Discovery only works against an OpenAI-compatible server we can query.
@@ -280,8 +280,8 @@ fn no_models_state(registry: &Registry) -> String {
         lines.extend([
             String::new(),
             "  Or discover what a running LM Studio server has loaded:".to_string(),
-            "      sp list models --remote".to_string(),
-            "  (then define the one you want with `sp define model`).".to_string(),
+            "      spawningpool list models --remote".to_string(),
+            "  (then define the one you want with `spawningpool define model`).".to_string(),
         ]);
     }
     lines.join("\n")
@@ -305,7 +305,7 @@ fn no_specialists_state(registry: &Registry) -> String {
         "Step 3: define one.".to_string(),
         String::new(),
         format!(
-            "      sp define specialist <name> --provider {} --model {} \\",
+            "      spawningpool define specialist <name> --provider {} --model {} \\",
             model.provider, model.id
         ),
         "        --system-prompt '<what this specialist does>'".to_string(),
@@ -313,7 +313,7 @@ fn no_specialists_state(registry: &Registry) -> String {
         "  Optional: to let it call a tool, add one first. A tool is just an".to_string(),
         "  executable script in ~/.spawningpool/tools/. Drop one in (or run the".to_string(),
         "  command below), then pass --tools <name> above:".to_string(),
-        "      sp define tool <name> --script <path>".to_string(),
+        "      spawningpool define tool <name> --script <path>".to_string(),
     ]
     .join("\n")
 }
@@ -333,15 +333,17 @@ fn ready_state(registry: &Registry) -> String {
         "Run a specialist against a prompt:".to_string(),
         String::new(),
         format!(
-            "      sp run --specialist {} --prompt '<your prompt>'",
+            "      spawningpool run --specialist {} --prompt '<your prompt>'",
             specialist.name
         ),
         String::new(),
         format!("  Specialists: {}", available_names(&registry.specialists)),
         String::new(),
         "  To give a specialist a tool to call, put an executable script in".to_string(),
-        "  ~/.spawningpool/tools/ (or `sp define tool <name> --script <path>`),".to_string(),
-        "  then add --tools <name> when you define the specialist. `sp list tools`".to_string(),
+        "  ~/.spawningpool/tools/ (or `spawningpool define tool <name> --script <path>`),"
+            .to_string(),
+        "  then add --tools <name> when you define the specialist. `spawningpool list tools`"
+            .to_string(),
         "  shows what's there.".to_string(),
     ]
     .join("\n")
@@ -442,7 +444,7 @@ async fn list(kind: ListKind) -> Result<(), String> {
         if names.is_empty() {
             eprintln!(
                 "no tools yet — drop an executable script in {} or run \
-                 `sp define tool <name> --script <path>` (see `sp show tool`).",
+                 `spawningpool define tool <name> --script <path>` (see `spawningpool show tool`).",
                 dir.display()
             );
         }
@@ -613,7 +615,7 @@ fn define_tool(name: &str, script: &Path) -> Result<(), String> {
         ));
     }
     // Resolve to an absolute, runnable path now so the tool works regardless of
-    // the directory `sp run` is later invoked from, and so an un-runnable script
+    // the directory `spawningpool run` is later invoked from, and so an un-runnable script
     // fails here with a fix rather than as a cryptic launch error mid-run.
     let script = resolve_script(script)?;
     let summary = spawningpool::summarize(&script).map_err(|e| e.to_string())?;
@@ -790,7 +792,7 @@ fn check_model_refs(registry: &Registry, model: &ModelDef) -> Result<(), String>
             String::new(),
             "  Define it first:".to_string(),
             format!(
-                "      sp define provider {} --api <anthropic-messages|openai-completions> --base-url <url>",
+                "      spawningpool define provider {} --api <anthropic-messages|openai-completions> --base-url <url>",
                 model.provider
             ),
         ]
@@ -823,7 +825,7 @@ fn check_specialist_refs(
             String::new(),
             "  Define it first:".to_string(),
             format!(
-                "      sp define provider {} --api <anthropic-messages|openai-completions> --base-url <url>",
+                "      spawningpool define provider {} --api <anthropic-messages|openai-completions> --base-url <url>",
                 missing.name
             ),
             String::new(),
@@ -840,7 +842,7 @@ fn check_specialist_refs(
             String::new(),
             "  Define it first:".to_string(),
             format!(
-                "      sp define model {} --provider {} --max-tokens <n> --context-window <n>",
+                "      spawningpool define model {} --provider {} --max-tokens <n> --context-window <n>",
                 missing.name, specialist.provider
             ),
             String::new(),
@@ -856,7 +858,7 @@ fn check_specialist_refs(
             format!("  Defined tools: {}", defined_tools(tools_dir)),
             String::new(),
             "  Back it with a script:".to_string(),
-            format!("      sp define tool {} --script <path>", missing.name),
+            format!("      spawningpool define tool {} --script <path>", missing.name),
         ]
         .join("\n"),
         EntityKind::Specialist => {
@@ -868,7 +870,7 @@ fn check_specialist_refs(
 
 /// Resolve a tool script to an absolute path and confirm it can actually run:
 /// it must exist and have the executable bit set. Storing it absolute means the
-/// tool resolves no matter where `sp run` is invoked from.
+/// tool resolves no matter where `spawningpool run` is invoked from.
 fn resolve_script(script: &Path) -> Result<PathBuf, String> {
     spawningpool::prepare_script(script).map_err(|e| match e {
         ScriptError::Unreadable { path, source } => format!(
@@ -1113,7 +1115,7 @@ mod tests {
         )
         .unwrap_err();
         assert!(err.contains("references provider 'ghost'"));
-        assert!(err.contains("sp define provider ghost"));
+        assert!(err.contains("spawningpool define provider ghost"));
 
         let err = check_specialist_refs(
             &registry,
@@ -1122,7 +1124,7 @@ mod tests {
         )
         .unwrap_err();
         assert!(err.contains("references model 'nope'"));
-        assert!(err.contains("sp define model nope"));
+        assert!(err.contains("spawningpool define model nope"));
 
         let err = check_specialist_refs(
             &registry,
@@ -1132,7 +1134,7 @@ mod tests {
         .unwrap_err();
         std::fs::remove_dir_all(&dir).ok();
         assert!(err.contains("references tool 'absent'"));
-        assert!(err.contains("sp define tool absent"));
+        assert!(err.contains("spawningpool define tool absent"));
     }
 
     #[test]
@@ -1164,7 +1166,7 @@ mod tests {
         };
         let err = check_model_refs(&registry, &bad).unwrap_err();
         assert!(err.contains("references provider 'ghost'"));
-        assert!(err.contains("sp define provider ghost"));
+        assert!(err.contains("spawningpool define provider ghost"));
     }
 
     #[test]
@@ -1215,8 +1217,8 @@ mod tests {
         let empty = Registry::default();
         let msg = onboarding_message(&empty);
         assert!(msg.contains("[1/4]"));
-        assert!(msg.contains("sp define provider anthropic"));
-        assert!(msg.contains("sp define provider lmstudio"));
+        assert!(msg.contains("spawningpool define provider anthropic"));
+        assert!(msg.contains("spawningpool define provider lmstudio"));
 
         // Provider only: step 2, points at the real provider.
         let mut reg = Registry::default();
@@ -1232,7 +1234,7 @@ mod tests {
         );
         let msg = onboarding_message(&reg);
         assert!(msg.contains("[2/4]"));
-        assert!(msg.contains("sp define model"));
+        assert!(msg.contains("spawningpool define model"));
         // Anthropic has no discovery endpoint, so don't offer --remote.
         assert!(!msg.contains("--remote"));
 
@@ -1258,7 +1260,7 @@ mod tests {
         );
         let msg = onboarding_message(&reg);
         assert!(msg.contains("[4/4]"));
-        assert!(msg.contains("sp run --specialist spec"));
+        assert!(msg.contains("spawningpool run --specialist spec"));
     }
 
     #[test]
@@ -1275,7 +1277,7 @@ mod tests {
             },
         );
         let msg = onboarding_message(&reg);
-        assert!(msg.contains("sp list models --remote"));
+        assert!(msg.contains("spawningpool list models --remote"));
     }
 
     #[test]

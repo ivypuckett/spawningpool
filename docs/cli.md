@@ -1,41 +1,41 @@
 # CLI reference
 
-The binary is `spawningpool`; its CLI name is `sp`. Examples below use `sp`
-(alias it to the built binary — see the [Quickstart](README.md#0-build-and-put-sp-on-your-path)).
+The binary is `spawningpool`. Install it with `cargo install spawningpool-cli`
+(see the [Quickstart](README.md#quickstart)).
 
 Every command operates on one JSON registry on disk. A missing registry is
 treated as empty, so the first `define` creates it. See
 [Configuration](configuration.md) for where it lives.
 
-- [`sp`](#sp-bare) — show the next step
-- [`sp define`](#sp-define) — create entities
-- [`sp list`](#sp-list) — list names
-- [`sp show`](#sp-show) — print one definition
-- [`sp delete`](#sp-delete) — remove an entity
-- [`sp run`](#sp-run) — run a specialist
+- [`spawningpool`](#spawningpool-bare) — show the next step
+- [`spawningpool define`](#spawningpool-define) — create entities
+- [`spawningpool list`](#spawningpool-list) — list names
+- [`spawningpool show`](#spawningpool-show) — print one definition
+- [`spawningpool delete`](#spawningpool-delete) — remove an entity
+- [`spawningpool run`](#spawningpool-run) — run a specialist
 
 ---
 
-## `sp` (bare)
+## `spawningpool` (bare)
 
 State-aware onboarding. Reads the registry and prints exactly which command to
 run next in the provider → model → specialist → run progression, plus a warning
 for any provider whose API-key env var isn't set.
 
 ```sh
-sp
+spawningpool
 ```
 
 ---
 
-## `sp define`
+## `spawningpool define`
 
 ### provider
 
 A wire protocol (`--api`) + endpoint (`--base-url`) + optional key env var.
 
 ```sh
-sp define provider <name> \
+spawningpool define provider <name> \
   --api <anthropic|openai> \
   --base-url <url> \
   [--api-key-env <ENV_VAR>] \
@@ -57,11 +57,11 @@ affects how a constrained specialist forces its tool call; see
 
 ```sh
 # Hosted Claude
-sp define provider anthropic --api anthropic \
+spawningpool define provider anthropic --api anthropic \
   --base-url https://api.anthropic.com --api-key-env ANTHROPIC_API_KEY
 
 # Local LM Studio (keyless)
-sp define provider lmstudio --api openai --base-url http://localhost:1234/v1
+spawningpool define provider lmstudio --api openai --base-url http://localhost:1234/v1
 ```
 
 ### model
@@ -71,7 +71,7 @@ Keyed by its API `id`, defined under a provider, with its token limits. There is
 `api`/`base-url` from its provider.
 
 ```sh
-sp define model <id> \
+spawningpool define model <id> \
   --provider <provider> \
   --max-tokens <n> \
   --context-window <n> \
@@ -79,7 +79,7 @@ sp define model <id> \
 ```
 
 ```sh
-sp define model claude-opus-4-8 --provider anthropic \
+spawningpool define model claude-opus-4-8 --provider anthropic \
   --max-tokens 4096 --context-window 200000 --name "Claude Opus 4.8"
 ```
 
@@ -91,7 +91,7 @@ to create it.
 A system prompt on a (provider, model), with tools it may call.
 
 ```sh
-sp define specialist <name> \
+spawningpool define specialist <name> \
   --provider <provider> \
   --model <model> \
   --system-prompt '<prompt>' \
@@ -121,15 +121,15 @@ sp define specialist <name> \
 
 ```sh
 # Agentic: the model picks tools
-sp define specialist netop --provider anthropic --model claude-opus-4-8 \
+spawningpool define specialist netop --provider anthropic --model claude-opus-4-8 \
   --system-prompt 'You diagnose network issues.' --tools 'ping,dig' --reasoning low
 
 # Constrained: always classify via one tool
-sp define specialist classifier --provider anthropic --model claude-opus-4-8 \
+spawningpool define specialist classifier --provider anthropic --model claude-opus-4-8 \
   --system-prompt 'Classify the message, then call classify.' --constraint classify
 
 # Streaming, no tools
-sp define specialist writer --provider anthropic --model claude-opus-4-8 \
+spawningpool define specialist writer --provider anthropic --model claude-opus-4-8 \
   --system-prompt 'You write concise release notes.' --stream
 ```
 
@@ -143,11 +143,11 @@ comments become the description and parameters the model sees. See
 [Writing tools](tools.md) for the script format.
 
 ```sh
-sp define tool <name> --script <path>
+spawningpool define tool <name> --script <path>
 ```
 
 ```sh
-sp define tool ping --script ./scripts/ping.sh
+spawningpool define tool ping --script ./scripts/ping.sh
 ```
 
 The script is checked at define time: it must exist and be executable
@@ -160,61 +160,61 @@ that folder by hand, edit one in place (its header is re-read on every run), or
 
 ---
 
-## `sp list`
+## `spawningpool list`
 
 Prints names, sorted, one per line.
 
 ```sh
-sp list providers
-sp list models
-sp list specialists
-sp list tools          # reads the tools folder, not the registry
+spawningpool list providers
+spawningpool list models
+spawningpool list specialists
+spawningpool list tools          # reads the tools folder, not the registry
 
 # Special: query a running LM Studio server for the model ids it has loaded
 # (at $LMSTUDIO_BASE_URL, default http://localhost:1234), not the registry.
-sp list models --remote
+spawningpool list models --remote
 ```
 
 ---
 
-## `sp show`
+## `spawningpool show`
 
 Prints one definition as pretty JSON. Errors if it doesn't exist.
 
 ```sh
-sp show provider anthropic
-sp show model claude-opus-4-8
-sp show specialist netop
-sp show tool ping
+spawningpool show provider anthropic
+spawningpool show model claude-opus-4-8
+spawningpool show specialist netop
+spawningpool show tool ping
 ```
 
 ---
 
-## `sp delete`
+## `spawningpool delete`
 
 Removes one entity. Deleting a provider, model, or tool that specialists still
 reference warns about each dangling reference (the delete still happens).
 Deleting a tool removes its script from the tools folder.
 
 ```sh
-sp delete specialist netop
-sp delete model claude-opus-4-8
-sp delete provider anthropic
-sp delete tool ping
+spawningpool delete specialist netop
+spawningpool delete model claude-opus-4-8
+spawningpool delete provider anthropic
+spawningpool delete tool ping
 ```
 
 ---
 
-## `sp run`
+## `spawningpool run`
 
-Instantiates a specialist with a prompt and runs it. Alias: `sp spawn`.
+Instantiates a specialist with a prompt and runs it. Alias: `spawningpool spawn`.
 
 ```sh
-sp run --specialist <name> --prompt '<prompt>'
+spawningpool run --specialist <name> --prompt '<prompt>'
 ```
 
 ```sh
-sp run --specialist netop --prompt 'Why can I not reach example.com?'
+spawningpool run --specialist netop --prompt 'Why can I not reach example.com?'
 ```
 
 Output streams:
@@ -223,5 +223,5 @@ Output streams:
 - **stderr** — token usage (`[usage] N in / N out`) and tool failures.
 
 The API key is sourced from the provider's `--api-key-env` variable at run time;
-if it isn't set you'll get an auth error (bare `sp` warns about this in advance).
+if it isn't set you'll get an auth error (bare `spawningpool` warns about this in advance).
 An agentic specialist that never stops calling tools fails after 16 turns.

@@ -1,4 +1,4 @@
-//! The `sp tui` front-end: a Ratatui terminal UI over the same registry the CLI
+//! The `spawningpool tui` front-end: a Ratatui terminal UI over the same registry the CLI
 //! manages. The interesting logic lives in [`app`] (pure state) and [`render`]
 //! (pure drawing); this module is the thin I/O shell — the terminal setup, the
 //! event loop, and the handful of side effects ([`app::Action`]s) that can't be

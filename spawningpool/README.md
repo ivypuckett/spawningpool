@@ -6,7 +6,7 @@
 
 Create hyper-specific, 0-waste agents.
 
-`spawningpool` is the core library behind the [`sp`](https://crates.io/crates/spawningpool-cli)
+`spawningpool` is the core library behind the [`spawningpool`](https://crates.io/crates/spawningpool-cli)
 CLI. A **specialist** is a saved template of `(provider, model, system prompt,
 tools)` that you instantiate with a prompt and run. This crate gives you the
 domain types, the on-disk registry, the provider clients (Anthropic and any
@@ -36,7 +36,7 @@ cargo add spawningpool
 
 ## Example
 
-Load the registry the `sp` CLI persists, then run a specialist and print its
+Load the registry the `spawningpool` CLI persists, then run a specialist and print its
 output as it streams:
 
 ```rust,no_run
@@ -45,7 +45,7 @@ use spawningpool::{run_specialist, store, tools, RunEvent};
 
 #[tokio::main]
 async fn main() -> Result<(), String> {
-    // Load the registry the `sp` CLI writes to disk.
+    // Load the registry the `spawningpool` CLI writes to disk.
     let registry = store::load()?;
     let specialist = registry
         .specialists

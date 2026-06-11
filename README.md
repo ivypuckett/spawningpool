@@ -17,7 +17,7 @@ Goal: create hyper-specific specialists with minimal system prompts that do one 
 
 ## CLI
 
-The binary is named `spawningpool`; its CLI name is `sp`. Provider, model, and
+The binary is named `spawningpool`. Provider, model, and
 specialist definitions are persisted to a single JSON registry at
 `$SPAWNINGPOOL_HOME/registry.json` (default `~/.spawningpool/registry.json`); set
 `$SPAWNINGPOOL_REGISTRY` to override the exact path. A missing file loads as an
@@ -27,24 +27,24 @@ registry entry (see [Writing tools](docs/tools.md)).
 
 ```bash
 # run (alias: spawn)
-sp run --specialist name --prompt 'prompt'
+spawningpool run --specialist name --prompt 'prompt'
 
 # define a provider — a wire protocol (--api) + endpoint (--base-url) + key env var
-sp define provider name \
+spawningpool define provider name \
   --api anthropic|openai \
   --base-url URL \
   --api-key-env ENV \        # optional
   --constrained-decoding     # optional; declare the endpoint supports it (see below)
 
 # define a model — keyed by its API id, against a provider, with its limits
-sp define model id \
+spawningpool define model id \
   --provider provider \
   --max-tokens N \
   --context-window N \
   --name NAME                # optional; defaults to the id
 
 # define a specialist
-sp define specialist name \
+spawningpool define specialist name \
   --provider provider \
   --model model \
   --system-prompt 'prompt' \
@@ -55,37 +55,37 @@ sp define specialist name \
 
 # define a tool from an executable script — its `# desc:` and `# params:`
 # header comments become the tool's description and parameters
-sp define tool name --script PATH
+spawningpool define tool name --script PATH
 
 # delete
-sp delete specialist name
-sp delete provider name
-sp delete model name
-sp delete tool name
+spawningpool delete specialist name
+spawningpool delete provider name
+spawningpool delete model name
+spawningpool delete tool name
 
 # show — print one definition as JSON
-sp show specialist name
-sp show provider name
-sp show model name
-sp show tool name
+spawningpool show specialist name
+spawningpool show provider name
+spawningpool show model name
+spawningpool show tool name
 
 # list — names of what's defined
-sp list specialists
-sp list providers
-sp list models
-sp list tools
+spawningpool list specialists
+spawningpool list providers
+spawningpool list models
+spawningpool list tools
 
 # discover the models a running LM Studio server currently has loaded
 # (at $LMSTUDIO_BASE_URL, default http://localhost:1234) instead of the registry
-sp list models --remote
+spawningpool list models --remote
 
 # browse and manage everything in an interactive terminal UI
-sp tui
+spawningpool tui
 ```
 
 ### TUI
 
-`sp tui` opens a Ratatui terminal UI over the same registry the commands above
+`spawningpool tui` opens a Ratatui terminal UI over the same registry the commands above
 manage. Three tabs — **Providers**, **Specialists**, **Tools** — are vim- and
 mouse-navigable; it starts on Specialists with the first one focused. Providers
 nest into their models (move right on a provider to drill into its models, left
@@ -119,11 +119,11 @@ Two wire protocols are implemented, selected at runtime from a model's `api`:
 
 spawningpool deliberately does **not** embed a catalog of hosted models or their
 limits — those facts go stale and being their arbiter is a liability. Models you
-call are defined in your own registry via `sp define model`.
+call are defined in your own registry via `spawningpool define model`.
 
 ### Tools
 
-A tool is a single executable script in the `tools/` folder. `sp define tool
+A tool is a single executable script in the `tools/` folder. `spawningpool define tool
 name --script PATH` symlinks one in for you (or just drop an executable script
 into the folder yourself); two header comments build the tool the model sees:
 
@@ -153,7 +153,7 @@ A specialist gets tools one of two ways, and the two are mutually exclusive:
   for a specialist whose sole job is to figure something out and call a tool with
   the result. The forced call runs once, its script executes, and the run ends.
   A forced tool call is incompatible with reasoning (Anthropic rejects the pair),
-  so a constrained specialist must keep `--reasoning off`; `sp define specialist`
+  so a constrained specialist must keep `--reasoning off`; `spawningpool define specialist`
   rejects the combination up front.
 
 How the forced call is realized depends on the provider, because forcing isn't
@@ -189,15 +189,15 @@ against the tool's JSON Schema and feeds violations back to the model to retry.
 ## Phases
 
 1. Install the above technologies into a hello-world project.
-2. `sp list providers`, `models`
-3. `sp define provider`
-4. `sp list specialists`
-5. `sp define model`
-6. `sp define specialist`
-7. `sp run specialist`
-8. `sp list tools`
-9. `sp define tool`
-10. `sp delete *`
+2. `spawningpool list providers`, `models`
+3. `spawningpool define provider`
+4. `spawningpool list specialists`
+5. `spawningpool define model`
+6. `spawningpool define specialist`
+7. `spawningpool run specialist`
+8. `spawningpool list tools`
+9. `spawningpool define tool`
+10. `spawningpool delete *`
 
 ## Simplifications
 
