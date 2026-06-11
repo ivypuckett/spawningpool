@@ -6,12 +6,33 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [0.1.1] - 2026-06-11
 
-First public release on crates.io. spawningpool lets you create hyper-specific,
+First public release on crates.io, published as two crates: the `spawningpool`
+library and the `spawningpool-cli` binary (installed as `spawningpool`). A
+packaging and polish release over the 0.1.0 feature set below.
+
+### Added
+
+- Per-crate READMEs and crates.io metadata, and packaging for the
+  `cargo install` path.
+
+### Changed
+
+- The CLI is presented as `spawningpool` throughout (docs and help) rather than
+  `sp`.
+- Both crates use the singular `agent` keyword for crates.io.
+
+### Fixed
+
+- TUI: editing a registry entity inside a multiplexer (Zellij/tmux/Kitty) no
+  longer opens a blank editor.
+- TUI: the cursor is no longer lost when popping back out of a drilled provider,
+  or when adding an entity while the view is filtered.
+
+## [0.1.0] - 2026-06-10
+
+Initial feature-complete build. spawningpool lets you create hyper-specific,
 0-waste agents — "specialists" with minimal system prompts that do one thing
 well — and call them from the CLI or manage them in an interactive terminal UI.
-
-Published as two crates: the `spawningpool` library and the `spawningpool-cli`
-binary (installed as `spawningpool`).
 
 ### Added
 
@@ -64,15 +85,10 @@ binary (installed as `spawningpool`).
   a new pane under Zellij, tmux, or Kitty), search, and chat/run actions.
 - **`lenny` and `ling` aliases** for the `specialist` subcommand.
 
-### Changed
-
-- The CLI is presented as `spawningpool` throughout (docs and help), and both
-  crates use the singular `agent` keyword for crates.io.
-- Per-crate READMEs and crates.io metadata added in preparation for publishing.
-
 ### Removed
 
-- The Tauri desktop app was removed; the interactive experience is now the
-  built-in `spawningpool tui`.
+- The Tauri desktop app was removed; the interactive experience is the built-in
+  `spawningpool tui`.
 
 [0.1.1]: https://github.com/ivypuckett/spawningpool/releases/tag/v0.1.1
+[0.1.0]: https://github.com/ivypuckett/spawningpool/releases/tag/v0.1.0
