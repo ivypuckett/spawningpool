@@ -181,7 +181,7 @@ fn render_help(frame: &mut Frame, area: Rect) {
         "  h j k l ←↓↑→   navigate (left: back · right: into / open)",
         "  enter          into folder / open file",
         "  a              add",
-        "  o              open (chat specialist · run tool · provider console)",
+        "  o              open (chat specialist · run tool · drill into provider)",
         "  e              edit in $EDITOR",
         "  d              delete (confirm y/n)",
         "  r              rename",
