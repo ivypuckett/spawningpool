@@ -8,7 +8,7 @@ repository = "https://github.com/ivypuckett/spawningpool"
 homepage = "https://github.com/ivypuckett/spawningpool"
 documentation = "https://docs.rs/spawningpool"
 readme = "README.md"
-keywords = ["ai", "llm", "agents", "claude", "openai"]
+keywords = ["ai", "llm", "agent", "claude", "openai"]
 categories = ["api-bindings", "development-tools", "asynchronous"]
 
 [dependencies]

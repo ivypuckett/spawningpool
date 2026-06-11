@@ -8,7 +8,7 @@ repository = "https://github.com/ivypuckett/spawningpool"
 homepage = "https://github.com/ivypuckett/spawningpool"
 documentation = "https://github.com/ivypuckett/spawningpool/tree/main/docs"
 readme = "README.md"
-keywords = ["ai", "llm", "agents", "cli", "claude"]
+keywords = ["ai", "llm", "agent", "cli", "claude"]
 categories = ["command-line-utilities", "development-tools"]
 
 [[bin]]
