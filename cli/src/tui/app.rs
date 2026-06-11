@@ -333,12 +333,10 @@ impl App {
             KeyCode::Char('e') => self.edit_current(),
             KeyCode::Char('r') => self.start_rename(),
             KeyCode::Char('d') => self.start_delete(),
-            KeyCode::Esc => {
-                // Esc clears an active filter, otherwise does nothing.
-                if !self.filter.is_empty() {
-                    self.filter.clear();
-                    self.clamp_selection();
-                }
+            // Esc clears an active filter, otherwise does nothing.
+            KeyCode::Esc if !self.filter.is_empty() => {
+                self.filter.clear();
+                self.clamp_selection();
             }
             _ => {}
         }
