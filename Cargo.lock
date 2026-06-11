@@ -2441,7 +2441,7 @@ dependencies = [
 
 [[package]]
 name = "spawningpool"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "async-stream",
  "async-trait",
@@ -2455,7 +2455,7 @@ dependencies = [
 
 [[package]]
 name = "spawningpool-cli"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "clap",
  "futures",
