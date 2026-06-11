@@ -19,13 +19,13 @@ any folder of scripts.
   ```sh
   install -D -m 755 ./ping.sh ~/.spawningpool/tools/ping
   ```
-  or by letting `sp define tool` symlink one in for you — handy when the script
+  or by letting `spawningpool define tool` symlink one in for you — handy when the script
   lives in a project repo and you want it tracked there, not copied:
   ```sh
-  sp define tool ping --script ./ping.sh
+  spawningpool define tool ping --script ./ping.sh
   ```
-- **See what's there** with `sp list tools`, inspect one with `sp show tool <name>`,
-  and remove one with `sp delete tool <name>` (or just `rm` the file).
+- **See what's there** with `spawningpool list tools`, inspect one with `spawningpool show tool <name>`,
+  and remove one with `spawningpool delete tool <name>` (or just `rm` the file).
 
 ## The script format
 
@@ -54,7 +54,7 @@ no shell-injection surface. Non-string JSON values are passed as their JSON text
 - A shebang line (e.g. `#!/bin/sh`, `#!/usr/bin/env python3`).
 - The executable bit set: `chmod +x your-script.sh`.
 
-`sp define tool` checks both up front, so a broken script fails immediately with
+`spawningpool define tool` checks both up front, so a broken script fails immediately with
 a fix. A script you drop into the folder by hand is checked when it's first run.
 
 ## Exit codes
@@ -78,19 +78,19 @@ chmod +x ping.sh
 
 # 2. Make it a tool: symlink it into the tools folder.
 #    (Or drop it in directly: install -D -m 755 ./ping.sh ~/.spawningpool/tools/ping)
-sp define tool ping --script ./ping.sh
+spawningpool define tool ping --script ./ping.sh
 
 # 3. Confirm it's there and what the model will see (header is read live)
-sp list tools
-sp show tool ping
+spawningpool list tools
+spawningpool show tool ping
 
 # 4. Give it to a specialist (agentic — the model decides when to call it)
-sp define specialist netop --provider anthropic --model claude-opus-4-8 \
+spawningpool define specialist netop --provider anthropic --model claude-opus-4-8 \
   --system-prompt 'You diagnose reachability problems using the tools available.' \
   --tools ping
 
 # 5. Run
-sp run --specialist netop --prompt 'Can you reach example.com?'
+spawningpool run --specialist netop --prompt 'Can you reach example.com?'
 ```
 
 ## Forcing a tool call (constraint)
@@ -107,13 +107,13 @@ cat > classify.sh <<'EOF'
 echo "recorded: $LABEL"
 EOF
 chmod +x classify.sh
-sp define tool classify --script ./classify.sh
+spawningpool define tool classify --script ./classify.sh
 
-sp define specialist sentiment --provider anthropic --model claude-opus-4-8 \
+spawningpool define specialist sentiment --provider anthropic --model claude-opus-4-8 \
   --system-prompt 'Classify the sentiment as positive, negative, or neutral, then call classify.' \
   --constraint classify          # note: reasoning must stay off with --constraint
 
-sp run --specialist sentiment --prompt 'I absolutely love this!'
+spawningpool run --specialist sentiment --prompt 'I absolutely love this!'
 ```
 
 The forced call works on any provider out of the box (it uses
@@ -123,7 +123,7 @@ output — many local OpenAI-compatible servers like LM Studio do — define it 
 match the tool's schema:
 
 ```sh
-sp define provider lmstudio --api openai --base-url http://localhost:1234/v1 \
+spawningpool define provider lmstudio --api openai --base-url http://localhost:1234/v1 \
   --constrained-decoding
 ```
 
@@ -135,9 +135,9 @@ There is no built-in chain abstraction — by design. A specialist's stdout is
 plain text, so compose them with the shell:
 
 ```sh
-topic=$(sp run --specialist haiku-namer --prompt 'a tool that spawns agents')
-sp run --specialist writer --prompt "Write a one-line tagline for: $topic"
+topic=$(spawningpool run --specialist haiku-namer --prompt 'a tool that spawns agents')
+spawningpool run --specialist writer --prompt "Write a one-line tagline for: $topic"
 ```
 
-For richer orchestration, drive `sp run` from any language or a workflow tool
+For richer orchestration, drive `spawningpool run` from any language or a workflow tool
 (e.g. LangGraph, Mastra).

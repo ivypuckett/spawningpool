@@ -15,7 +15,7 @@ order (first match wins):
 | `HOME` | Falls back to `~/.spawningpool/registry.json` (the default). |
 | *(none set)* | Relative `.spawningpool/registry.json`. |
 
-A missing file loads as an empty registry, so the first `sp define` creates it.
+A missing file loads as an empty registry, so the first `spawningpool define` creates it.
 Writes are atomic (temp file + rename), so a crash can't leave it half-written.
 
 ```sh
@@ -23,9 +23,9 @@ Writes are atomic (temp file + rename), so a crash can't leave it half-written.
 cat ~/.spawningpool/registry.json
 
 # Use an isolated registry for an experiment
-SPAWNINGPOOL_REGISTRY=/tmp/scratch.json sp define provider test --api openai \
+SPAWNINGPOOL_REGISTRY=/tmp/scratch.json spawningpool define provider test --api openai \
   --base-url http://localhost:1234/v1
-SPAWNINGPOOL_REGISTRY=/tmp/scratch.json sp list providers
+SPAWNINGPOOL_REGISTRY=/tmp/scratch.json spawningpool list providers
 ```
 
 ## API keys
@@ -34,12 +34,12 @@ A provider stores the *name* of the env var its key comes from (`--api-key-env`)
 not the key itself. The key is read from that variable at run time.
 
 ```sh
-sp define provider anthropic --api anthropic \
+spawningpool define provider anthropic --api anthropic \
   --base-url https://api.anthropic.com --api-key-env ANTHROPIC_API_KEY
 export ANTHROPIC_API_KEY=sk-ant-...
 ```
 
-Run bare `sp` to be warned about any provider whose key variable isn't set
+Run bare `spawningpool` to be warned about any provider whose key variable isn't set
 before a run hits the error.
 
 ### Built-in fallbacks
@@ -56,12 +56,12 @@ still check these directly:
 
 | Variable | Default | Used by |
 | --- | --- | --- |
-| `LMSTUDIO_BASE_URL` | `http://localhost:1234` | `sp list models --remote` discovery. |
+| `LMSTUDIO_BASE_URL` | `http://localhost:1234` | `spawningpool list models --remote` discovery. |
 | `LMSTUDIO_API_KEY` | *(unset)* | Optional bearer token for OpenAI-compatible requests. |
 
 ```sh
 # Point discovery at a non-default LM Studio host
-LMSTUDIO_BASE_URL=http://192.168.1.50:1234 sp list models --remote
+LMSTUDIO_BASE_URL=http://192.168.1.50:1234 spawningpool list models --remote
 ```
 
 ## Building from source
@@ -74,7 +74,7 @@ cargo clippy             # lint
 cargo fmt                # format
 ```
 
-The binary is named `spawningpool`; alias it to `sp` for the documented usage:
+The binary is named `spawningpool`; alias it to `spawningpool` for the documented usage:
 
 ```sh
 alias sp="$PWD/target/release/spawningpool"

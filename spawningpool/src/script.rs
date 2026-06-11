@@ -2,7 +2,7 @@
 //! description and parameters, and which is run with those parameters passed as
 //! environment variables.
 //!
-//! Nothing here is provider-aware. `sp define tool` calls [`summarize`] to read
+//! Nothing here is provider-aware. `spawningpool define tool` calls [`summarize`] to read
 //! a script's `# desc:` and `# params:` header into a tool definition; the
 //! runner calls [`run_script`] to execute it.
 
@@ -101,7 +101,7 @@ impl std::error::Error for ScriptError {
 /// Resolve a tool script to an absolute path and confirm it can actually run: it
 /// must exist and have the executable bit set. Storing the script absolute means
 /// the tool resolves no matter where it is later invoked from. This is the check
-/// `sp define tool` (or a UI) runs before accepting a script, so an un-runnable
+/// `spawningpool define tool` (or a UI) runs before accepting a script, so an un-runnable
 /// one fails at define time with a fixable error rather than mid-run.
 pub fn prepare_script(script: &Path) -> Result<PathBuf, ScriptError> {
     use std::os::unix::fs::PermissionsExt;

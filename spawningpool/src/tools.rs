@@ -15,7 +15,7 @@ use crate::script;
 
 /// Resolve a tool by name: find the script backing it and read its header into a
 /// [`ToolDef`]. The returned `script` is canonical, so it runs regardless of the
-/// directory `sp run` is invoked from.
+/// directory `spawningpool run` is invoked from.
 pub fn resolve(dir: &Path, name: &str) -> Result<ToolDef, String> {
     let path = find(dir, name)?;
     // Canonicalize so a symlink resolves to the real executable; a broken
@@ -86,7 +86,7 @@ pub fn remove(dir: &Path, name: &str) -> Result<bool, String> {
 
 /// Whether `name` is usable as a tool name — what providers accept for a tool
 /// (ASCII alphanumerics, `_`, `-`) and what keeps the name<->file-stem mapping
-/// unambiguous. Used to gate `sp define tool` and to skip junk in [`list`].
+/// unambiguous. Used to gate `spawningpool define tool` and to skip junk in [`list`].
 pub fn is_valid_tool_name(name: &str) -> bool {
     !name.is_empty()
         && name.len() <= 64
