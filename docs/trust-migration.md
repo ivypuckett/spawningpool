@@ -70,6 +70,35 @@ R0018  spawningpool/src/ai/providers/openai.rs     :40
  2  spawningpool/tests/ai_integration.rs       2  spawningpool/src/script.rs
 ```
 
+## ⛔ Adoptability blocker (Trust 0.1.0 vs. a cargo workspace)
+
+Verification shows Trust 0.1.0 **cannot be adopted as a build gate or a clean lint gate**
+for this workspace without abandoning cargo:
+
+1. **`#![strict]` is rejected by stock `rustc`** (`cannot find attribute 'strict'`). It cannot
+   be committed to source — doing so breaks `cargo build`/`clippy`/`test`.
+2. **No cargo integration ships in 0.1.0.** There is no `cargo trustc` and no `RUSTC_WRAPPER`
+   shim. `trust build` compiles a *single file* and bypasses cargo entirely (no dependency
+   resolution, no workspace linking, no integration-test harness). `trust lower` strips
+   `#![strict]` and the dialect sugar back to plain Rust, but nothing orchestrates that across
+   a multi-crate workspace.
+3. **R0042 (83% of findings) is unsatisfiable in stock Rust.** Satisfying it requires named-arg
+   call syntax (`f(width: …)`), which stock `rustc` also rejects. It can only ever be green by
+   compiling through Trust's lowering — i.e. not using cargo.
+
+### What Trust 0.1.0 *can* do here today
+
+Act as an **out-of-tree advisory linter** for the bug-catching rules only — keep source as
+plain Rust, never commit `#![strict]`, and in CI/a hook run, per file:
+
+```sh
+{ echo '#![strict]'; cat "$f"; } | trust check --format json - | jq '.diagnostics[] | select(.rule != "R0042")'
+```
+
+That surfaces the **~22 non-R0042 findings** (unwrap, as-cast, bare-index, error-context,
+impl-trait-return, same-type-params) as an actionable plain-Rust quality backlog, while R0042
+and the dialect sugar are simply out of reach until Trust ships cargo integration.
+
 ## Recommended migration path
 
 1. **Phase 1 — library production code.** Add `#![strict]` to one `spawningpool/src`
