@@ -97,8 +97,9 @@ cargo clippy             # lint
 cargo fmt                # format
 ```
 
-The binary is named `spawningpool`; alias it to `spawningpool` for the documented usage:
+The compiled binary is `target/release/spawningpool` (or `target/debug/spawningpool`).
+Put it on your `PATH` to invoke it as `spawningpool`, the way the docs show:
 
 ```sh
-alias sp="$PWD/target/release/spawningpool"
+export PATH="$PWD/target/release:$PATH"
 ```

@@ -54,7 +54,9 @@ spawningpool define specialist haiku-namer --provider anthropic --model claude-o
 spawningpool run --specialist haiku-namer --prompt 'A CLI that spawns AI specialists'
 ```
 
-Assistant text prints to stdout; token usage and any tool failures go to stderr.
+By default `run` prints a JSON result envelope (the assistant text is the
+`output` field); pipe it to `jq -r .output` for just the text, or pass
+`--output plaintext` to stream the response to the terminal.
 
 Browse and manage everything in an interactive terminal UI with `spawningpool tui`.
 

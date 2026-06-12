@@ -26,8 +26,10 @@ is just an executable script in the `tools/` folder beside the registry, not a
 registry entry (see [Writing tools](docs/tools.md)).
 
 ```bash
-# run (alias: spawn)
-spawningpool run --specialist name --prompt 'prompt'
+# run (alias: spawn) — prints a JSON result envelope by default;
+# use --output plaintext for streaming terminal output
+spawningpool run --specialist name --prompt 'prompt' \
+  --output json|plaintext     # optional, defaults to json
 
 # define a provider — a wire protocol (--api) + endpoint (--base-url) + key env var
 spawningpool define provider name \
@@ -51,7 +53,7 @@ spawningpool define specialist name \
   --tools 'tool,tool2' \      # optional, comma-separated (mutually exclusive with --constraint)
   --constraint 'tool' \       # optional, forces this one tool call (mutually exclusive with --tools)
   --reasoning off|low|medium|high \   # optional, defaults to off (must be off with --constraint)
-  --stream                    # optional, stream the response
+  --stream                    # optional, stream the response (visible only with `run --output plaintext`)
 
 # define a tool from an executable script — its `# desc:` and `# params:`
 # header comments become the tool's description and parameters
