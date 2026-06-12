@@ -20,6 +20,11 @@ struct Cli {
     command: Option<Command>,
 }
 
+#[derive(clap::ValueEnum, Clone)]
+enum OutputFormat {
+    Json,
+}
+
 #[derive(Subcommand)]
 enum Command {
     /// Run a specialist against a prompt.
@@ -29,6 +34,10 @@ enum Command {
         specialist: String,
         #[arg(long)]
         prompt: String,
+        /// Output format. Omit for plain text; use `json` for a machine-readable
+        /// `{"output","inputTokens","outputTokens"}` envelope.
+        #[arg(long, value_name = "FORMAT")]
+        output: Option<OutputFormat>,
     },
     /// List defined entities.
     List {
@@ -179,7 +188,11 @@ async fn run(cli: Cli) -> Result<(), String> {
         // Bare `spawningpool` reads where you are in the provider → model → specialist →
         // run progression and shows the next step.
         None => status(),
-        Some(Command::Run { specialist, prompt }) => run_specialist(&specialist, &prompt).await,
+        Some(Command::Run {
+            specialist,
+            prompt,
+            output,
+        }) => run_specialist(&specialist, &prompt, output).await,
         Some(Command::List { kind }) => list(kind).await,
         Some(Command::Show { entity }) => show(entity),
         Some(Command::Define { entity }) => define(entity),
@@ -371,7 +384,11 @@ fn unset_key_warnings(registry: &Registry, is_set: impl Fn(&str) -> bool) -> Vec
         .collect()
 }
 
-async fn run_specialist(name: &str, prompt: &str) -> Result<(), String> {
+async fn run_specialist(
+    name: &str,
+    prompt: &str,
+    output: Option<OutputFormat>,
+) -> Result<(), String> {
     let registry = spawningpool::store::load()?;
     let specialist = registry
         .specialists
@@ -398,36 +415,75 @@ async fn run_specialist(name: &str, prompt: &str) -> Result<(), String> {
     }
 
     let client = Client::new();
-    // Render the run to the terminal: assistant text on stdout (streamed live),
-    // usage and tool failures on stderr, tool output on stdout. `printed_text`
-    // tracks streamed deltas so a trailing newline lands before the usage line.
-    let mut printed_text = false;
-    let mut render = |event: RunEvent<'_>| match event {
-        RunEvent::TextDelta(delta) => {
-            print!("{delta}");
-            std::io::stdout().flush().ok();
-            printed_text = true;
+
+    match output {
+        Some(OutputFormat::Json) => {
+            let mut text = String::new();
+            let mut input_tokens: u32 = 0;
+            let mut output_tokens: u32 = 0;
+            let mut render = |event: RunEvent<'_>| match event {
+                RunEvent::TextDelta(delta) => text.push_str(delta),
+                RunEvent::Text(t) => text.push_str(t),
+                RunEvent::Usage(usage) => {
+                    input_tokens += usage.input;
+                    output_tokens += usage.output;
+                }
+                RunEvent::ToolRan { .. } | RunEvent::ToolFailed { .. } => {}
+            };
+            spawningpool::run::run_specialist(
+                &client,
+                &registry,
+                specialist,
+                prompt,
+                &tools,
+                &opts,
+                &mut render,
+            )
+            .await?;
+            println!(
+                "{}",
+                serde_json::json!({
+                    "output": text,
+                    "inputTokens": input_tokens,
+                    "outputTokens": output_tokens,
+                })
+            );
+            Ok(())
         }
-        RunEvent::Text(text) => println!("{text}"),
-        RunEvent::Usage(usage) => {
-            if std::mem::take(&mut printed_text) {
-                println!();
-            }
-            eprintln!("[usage] {} in / {} out", usage.input, usage.output);
+        None => {
+            // Render the run to the terminal: assistant text on stdout (streamed
+            // live), usage and tool failures on stderr, tool output on stdout.
+            // `printed_text` tracks streamed deltas so a trailing newline lands
+            // before the usage line.
+            let mut printed_text = false;
+            let mut render = |event: RunEvent<'_>| match event {
+                RunEvent::TextDelta(delta) => {
+                    print!("{delta}");
+                    std::io::stdout().flush().ok();
+                    printed_text = true;
+                }
+                RunEvent::Text(text) => println!("{text}"),
+                RunEvent::Usage(usage) => {
+                    if std::mem::take(&mut printed_text) {
+                        println!();
+                    }
+                    eprintln!("[usage] {} in / {} out", usage.input, usage.output);
+                }
+                RunEvent::ToolRan { name, output, .. } => println!("[tool {name}]\n{output}"),
+                RunEvent::ToolFailed { name, message } => eprintln!("[tool {name}] {message}"),
+            };
+            spawningpool::run::run_specialist(
+                &client,
+                &registry,
+                specialist,
+                prompt,
+                &tools,
+                &opts,
+                &mut render,
+            )
+            .await
         }
-        RunEvent::ToolRan { name, output, .. } => println!("[tool {name}]\n{output}"),
-        RunEvent::ToolFailed { name, message } => eprintln!("[tool {name}] {message}"),
-    };
-    spawningpool::run::run_specialist(
-        &client,
-        &registry,
-        specialist,
-        prompt,
-        &tools,
-        &opts,
-        &mut render,
-    )
-    .await
+    }
 }
 
 async fn list(kind: ListKind) -> Result<(), String> {

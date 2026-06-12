@@ -145,7 +145,7 @@ async fn run_specialist_interactive(terminal: &mut Tui, name: &str) -> Result<()
     let outcome = match prompt {
         Some(prompt) if !prompt.trim().is_empty() => {
             // Reuse the CLI's full run-and-render path.
-            crate::run_specialist(name, prompt.trim()).await
+            crate::run_specialist(name, prompt.trim(), None).await
         }
         _ => Ok(()),
     };
