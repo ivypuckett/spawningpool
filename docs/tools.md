@@ -116,11 +116,14 @@ spawningpool define specialist sentiment --provider anthropic --model claude-opu
 spawningpool run --specialist sentiment --prompt 'I absolutely love this!'
 ```
 
-The forced call works on any provider out of the box (it uses
-`tool_choice: "required"`). If the provider's endpoint supports grammar-constrained
-output — many local OpenAI-compatible servers like LM Studio do — define it with
-`--constrained-decoding` to get a hard, token-level guarantee that the arguments
-match the tool's schema:
+The forced call works on any provider out of the box via the **tool-call trick**:
+rather than relying on grammar-constrained decoding (which not every endpoint
+supports), it forces a tool call whose arguments are the structured output
+(`tool_choice: "required"` on OpenAI-compatible endpoints, native forced tool
+choice on Anthropic). If an OpenAI-compatible endpoint supports grammar-constrained
+output — many local servers like LM Studio do — define that provider with
+`--constrained-decoding` to upgrade to a hard, token-level guarantee that the
+arguments match the tool's schema (`anthropic` providers ignore the flag):
 
 ```sh
 spawningpool define provider lmstudio --api openai --base-url http://localhost:1234/v1 \

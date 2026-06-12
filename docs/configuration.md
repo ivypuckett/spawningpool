@@ -52,6 +52,29 @@ still check these directly:
 | `anthropic` | `ANTHROPIC_API_KEY` | Required; a run errors without a key. |
 | `openai` | `LMSTUDIO_API_KEY` | Optional — LM Studio is keyless; only sent if set. |
 
+## Forcing structured output (the tool-call trick)
+
+A specialist defined with `--constraint <tool>` is forced to produce one call to
+that tool, so the tool's parameters become a structured-output schema. By default
+this is realized with the **tool-call trick**: rather than relying on
+grammar-constrained decoding (which not every endpoint supports), the request
+forces a tool call whose arguments are the structured output. This works on every
+provider out of the box — `tool_choice: "required"` on OpenAI-compatible
+endpoints, native forced tool choice on Anthropic.
+
+Grammar-constrained decoding (a hard, token-level guarantee) is an opt-in upgrade,
+declared per provider with `--constrained-decoding`:
+
+| Provider API | `--constrained-decoding` |
+| --- | --- |
+| `openai-completions` | Honored — forces the call via a strict `response_format` JSON schema. |
+| `anthropic-messages` | Ignored — always uses native forced tool choice. |
+
+It's a capability you assert, not something inferred: two `openai-completions`
+endpoints can differ, so the flag declares what the endpoint behind this provider
+supports. See [CLI reference → define provider](cli.md#provider) and
+[Writing tools → forcing a tool call](tools.md#forcing-a-tool-call-constraint).
+
 ## LM Studio
 
 | Variable | Default | Used by |
