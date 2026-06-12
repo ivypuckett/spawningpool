@@ -4,19 +4,39 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.1.1] - 2026-06-11
+## [0.2.0] - 2026-06-12
 
 First public release on crates.io, published as two crates: the `spawningpool`
-library and the `spawningpool-cli` binary (installed as `spawningpool`). A
-packaging and polish release over the 0.1.0 feature set below.
+library and the `spawningpool-cli` binary (installed as `spawningpool`). On top
+of packaging the 0.1.0 feature set, this release reworks `run`'s output into a
+structured, machine-readable envelope by default and tightens up the TUI.
 
 ### Added
 
+- **`run --output <format>`.** `run` now emits a structured envelope. The
+  default is `json`; pass `--output plaintext` for the old live terminal
+  rendering.
+- **Expanded JSON envelope.** The `json` output is a single object with nine
+  fields: `output`, `thinking`, `inputTokens`, `outputTokens`, `stopReason`,
+  `model`, `specialist`, `turns`, and `toolCalls` (each tool call records its
+  `name`, `success`, and `output`).
+- **Library run events for reasoning and stop reasons.** `RunEvent` gained
+  `ThinkingDelta`, `Thinking`, and `TurnDone { stop_reason }` variants, so
+  callers can observe a model's reasoning content and per-turn stop reasons.
 - Per-crate READMEs and crates.io metadata, and packaging for the
   `cargo install` path.
 
 ### Changed
 
+- **`run` defaults to JSON output.** *(Breaking.)* Previously `run` streamed
+  plain text to the terminal by default and `--output json` was opt-in. JSON is
+  now the default; callers who relied on streamed terminal output must pass
+  `--output plaintext`.
+- **TUI: `o` on a provider drills into its models.** A provider's `base_url` is
+  an API endpoint, not a web page, so pressing `o` on one now drills into its
+  models (matching Enter/→) instead of trying to open the URL in a browser. The
+  browser-opening path is gone, which also removes a class of hangs and crashes
+  on systems whose URL opener misbehaves against a dead endpoint.
 - The CLI is presented as `spawningpool` throughout (docs and help) rather than
   `sp`.
 - Both crates use the singular `agent` keyword for crates.io.
@@ -27,6 +47,19 @@ packaging and polish release over the 0.1.0 feature set below.
   longer opens a blank editor.
 - TUI: the cursor is no longer lost when popping back out of a drilled provider,
   or when adding an entity while the view is filtered.
+
+### Documentation
+
+- Documented the `run --output` flag and corrected a default-output mismatch in
+  the docs.
+- Documented the tool-call trick and corrected the Anthropic
+  constrained-decoding claim.
+
+### Removed
+
+- The provider-console browser action (and its supporting `OpenProvider`
+  action, `open_provider`/`open_url_command`/`provider_base_url` helpers, and
+  the detached-spawn path) — superseded by drilling into a provider's models.
 
 ## [0.1.0] - 2026-06-10
 
@@ -90,5 +123,5 @@ well — and call them from the CLI or manage them in an interactive terminal UI
 - The Tauri desktop app was removed; the interactive experience is the built-in
   `spawningpool tui`.
 
-[0.1.1]: https://github.com/ivypuckett/spawningpool/releases/tag/v0.1.1
+[0.2.0]: https://github.com/ivypuckett/spawningpool/releases/tag/v0.2.0
 [0.1.0]: https://github.com/ivypuckett/spawningpool/releases/tag/v0.1.0
