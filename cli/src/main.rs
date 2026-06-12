@@ -35,7 +35,8 @@ enum Command {
         #[arg(long)]
         prompt: String,
         /// Output format. Omit for plain text; use `json` for a machine-readable
-        /// `{"output","inputTokens","outputTokens"}` envelope.
+        /// envelope with output, thinking, token counts, stopReason, model,
+        /// specialist, turns, and toolCalls.
         #[arg(long, value_name = "FORMAT")]
         output: Option<OutputFormat>,
     },
