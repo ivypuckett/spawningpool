@@ -75,14 +75,14 @@ spawningpool list models --remote        # prints ids the running server has loa
 ### 3. Define a specialist
 
 ```sh
-spawningpool define specialist haiku-namer --provider anthropic --model claude-opus-4-8 \
+spawningpool define specialist namer --provider anthropic --model claude-opus-4-8 \
   --system-prompt 'You suggest one short, memorable name. Reply with only the name.'
 ```
 
 ### 4. Run it
 
 ```sh
-spawningpool run --specialist haiku-namer --prompt 'A CLI that spawns AI specialists'
+spawningpool run --specialist namer --prompt 'A CLI that spawns AI specialists'
 ```
 
 By default this prints a JSON result envelope (the assistant text is the

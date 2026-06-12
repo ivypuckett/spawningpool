@@ -49,7 +49,7 @@ async fn main() -> Result<(), String> {
     let registry = store::load()?;
     let specialist = registry
         .specialists
-        .get("haiku-namer")
+        .get("namer")
         .ok_or("unknown specialist")?;
 
     // Resolve the specialist's tools from the tools/ folder beside the registry.
