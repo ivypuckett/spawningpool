@@ -102,7 +102,7 @@ spawningpool define specialist <name> \
   [--tools 'a,b,c']            # comma-separated; the model freely calls these
   [--constraint 'tool']        # OR: force exactly one call to this tool
   [--reasoning off|low|medium|high]   # default off
-  [--stream]                   # stream output token-by-token
+  [--stream]                   # stream output token-by-token (only visible with `run --output plaintext`)
 ```
 
 `--tools` and `--constraint` are **mutually exclusive**:
@@ -219,17 +219,34 @@ spawningpool delete tool ping
 Instantiates a specialist with a prompt and runs it. Alias: `spawningpool spawn`.
 
 ```sh
-spawningpool run --specialist <name> --prompt '<prompt>'
+spawningpool run --specialist <name> --prompt '<prompt>' \
+  [--output <json|plaintext>]   # default json
 ```
 
 ```sh
 spawningpool run --specialist netop --prompt 'Why can I not reach example.com?'
 ```
 
-Output streams:
-- **stdout** — assistant text (streamed live if the specialist was defined
-  `--stream`) and each tool's output (`[tool <name>]`).
-- **stderr** — token usage (`[usage] N in / N out`) and tool failures.
+`--output` chooses the format:
+
+- **`json`** (the default) — a single machine-readable JSON object on stdout
+  once the run finishes, with fields: `output` (assistant text), `thinking`,
+  `inputTokens`, `outputTokens`, `stopReason`, `model`, `specialist`, `turns`,
+  and `toolCalls` (each `{name, success, output}`). Nothing is streamed and
+  nothing goes to stderr — even a specialist defined `--stream` is buffered into
+  `output`.
+- **`plaintext`** — terminal-friendly streaming:
+  - **stdout** — assistant text (streamed live if the specialist was defined
+    `--stream`) and each tool's output (`[tool <name>]`).
+  - **stderr** — token usage (`[usage] N in / N out`) and tool failures.
+
+```sh
+# Pipe-friendly default: parse the JSON envelope
+spawningpool run --specialist netop --prompt 'reachable?' | jq -r .output
+
+# Watch it stream in a terminal
+spawningpool run --specialist writer --prompt 'tagline' --output plaintext
+```
 
 The API key is sourced from the provider's `--api-key-env` variable at run time;
 if it isn't set you'll get an auth error (bare `spawningpool` warns about this in advance).

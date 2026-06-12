@@ -75,17 +75,21 @@ spawningpool list models --remote        # prints ids the running server has loa
 ### 3. Define a specialist
 
 ```sh
-spawningpool define specialist haiku-namer --provider anthropic --model claude-opus-4-8 \
+spawningpool define specialist namer --provider anthropic --model claude-opus-4-8 \
   --system-prompt 'You suggest one short, memorable name. Reply with only the name.'
 ```
 
 ### 4. Run it
 
 ```sh
-spawningpool run --specialist haiku-namer --prompt 'A CLI that spawns AI specialists'
+spawningpool run --specialist namer --prompt 'A CLI that spawns AI specialists'
 ```
 
-Assistant text prints to stdout; token usage and any tool failures go to stderr.
+By default this prints a JSON result envelope (the assistant text is the
+`output` field, alongside token counts and any tool calls) — pipe it to `jq -r
+.output` for just the text, or pass `--output plaintext` to stream the response
+straight to the terminal. See the [CLI reference](cli.md#spawningpool-run) for
+the full envelope.
 
 That's the whole loop. Add tools next — see **[Writing tools](tools.md)** — or
 read the full **[CLI reference](cli.md)**.

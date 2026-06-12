@@ -138,7 +138,7 @@ There is no built-in chain abstraction — by design. A specialist's stdout is
 plain text, so compose them with the shell:
 
 ```sh
-topic=$(spawningpool run --specialist haiku-namer --prompt 'a tool that spawns agents')
+topic=$(spawningpool run --specialist namer --prompt 'a tool that spawns agents')
 spawningpool run --specialist writer --prompt "Write a one-line tagline for: $topic"
 ```
 
