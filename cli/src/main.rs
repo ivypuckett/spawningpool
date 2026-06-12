@@ -4,7 +4,7 @@
 use std::path::{Path, PathBuf};
 
 use clap::{Parser, Subcommand};
-use spawningpool::ai::{Api, Client, Reasoning};
+use spawningpool::ai::{Api, Client, Reasoning, StopReason};
 use spawningpool::{
     EntityKind, ModelDef, ProviderDef, Referrer, Registry, RunEvent, ScriptError, Specialist,
 };
@@ -418,17 +418,40 @@ async fn run_specialist(
 
     match output {
         Some(OutputFormat::Json) => {
-            let mut text = String::new();
+            let mut output = String::new();
+            let mut thinking = String::new();
             let mut input_tokens: u32 = 0;
             let mut output_tokens: u32 = 0;
+            let mut stop_reason: Option<StopReason> = None;
+            let mut turns: u32 = 0;
+            let mut tool_calls: Vec<serde_json::Value> = Vec::new();
             let mut render = |event: RunEvent<'_>| match event {
-                RunEvent::TextDelta(delta) => text.push_str(delta),
-                RunEvent::Text(t) => text.push_str(t),
+                RunEvent::TextDelta(delta) => output.push_str(delta),
+                RunEvent::Text(t) => output.push_str(t),
+                RunEvent::ThinkingDelta(delta) => thinking.push_str(delta),
+                RunEvent::Thinking(t) => thinking.push_str(t),
+                RunEvent::TurnDone { stop_reason: sr } => {
+                    stop_reason = Some(sr);
+                    turns += 1;
+                }
                 RunEvent::Usage(usage) => {
                     input_tokens += usage.input;
                     output_tokens += usage.output;
                 }
-                RunEvent::ToolRan { .. } | RunEvent::ToolFailed { .. } => {}
+                RunEvent::ToolRan {
+                    name,
+                    output: out,
+                    success,
+                } => tool_calls.push(serde_json::json!({
+                    "name": name,
+                    "success": success,
+                    "output": out,
+                })),
+                RunEvent::ToolFailed { name, message } => tool_calls.push(serde_json::json!({
+                    "name": name,
+                    "success": false,
+                    "output": message,
+                })),
             };
             spawningpool::run::run_specialist(
                 &client,
@@ -443,9 +466,15 @@ async fn run_specialist(
             println!(
                 "{}",
                 serde_json::json!({
-                    "output": text,
+                    "output": output,
+                    "thinking": thinking,
                     "inputTokens": input_tokens,
                     "outputTokens": output_tokens,
+                    "stopReason": stop_reason,
+                    "model": specialist.model,
+                    "specialist": name,
+                    "turns": turns,
+                    "toolCalls": tool_calls,
                 })
             );
             Ok(())
@@ -463,6 +492,7 @@ async fn run_specialist(
                     printed_text = true;
                 }
                 RunEvent::Text(text) => println!("{text}"),
+                RunEvent::ThinkingDelta(_) | RunEvent::Thinking(_) | RunEvent::TurnDone { .. } => {}
                 RunEvent::Usage(usage) => {
                     if std::mem::take(&mut printed_text) {
                         println!();

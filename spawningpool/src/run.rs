@@ -11,7 +11,8 @@ use std::collections::HashMap;
 use futures::StreamExt;
 
 use crate::ai::{
-    Client, CompleteOptions, ContentBlock, Context, Message, Model, Role, StreamEvent, Usage,
+    Client, CompleteOptions, ContentBlock, Context, Message, Model, Role, StopReason, StreamEvent,
+    Usage,
 };
 use crate::domain::{Registry, Specialist, ToolDef};
 
@@ -27,6 +28,12 @@ pub enum RunEvent<'a> {
     TextDelta(&'a str),
     /// A complete assistant text block (non-streaming specialists).
     Text(&'a str),
+    /// A chunk of thinking text as it streams (streaming + reasoning enabled).
+    ThinkingDelta(&'a str),
+    /// A complete thinking block (non-streaming + reasoning enabled).
+    Thinking(&'a str),
+    /// The stop reason for the turn that just completed, emitted before [`Usage`].
+    TurnDone { stop_reason: StopReason },
     /// Token usage reported for the turn that just completed.
     Usage(Usage),
     /// A tool ran (possibly exiting non-zero); carries its combined output.
@@ -68,7 +75,9 @@ pub async fn run_specialist(
     let stream = specialist.stream && !opts.constrained_decoding;
 
     for _ in 0..MAX_TURNS {
-        let (message, usage) = one_turn(client, &model, &ctx, opts, stream, observer).await?;
+        let (message, usage, stop_reason) =
+            one_turn(client, &model, &ctx, opts, stream, observer).await?;
+        observer(RunEvent::TurnDone { stop_reason });
         observer(RunEvent::Usage(usage));
 
         let calls: Vec<(String, String, serde_json::Value)> = message
@@ -115,8 +124,9 @@ pub async fn run_specialist(
     ))
 }
 
-/// Run one model turn, reporting any assistant text (streamed live when the
-/// specialist streams), and return the fully assembled message plus usage.
+/// Run one model turn, reporting any assistant text and thinking (streamed live
+/// when the specialist streams), and return the assembled message, usage, and
+/// stop reason.
 async fn one_turn(
     client: &Client,
     model: &Model,
@@ -124,7 +134,7 @@ async fn one_turn(
     opts: &CompleteOptions,
     stream: bool,
     observer: &mut dyn FnMut(RunEvent<'_>),
-) -> Result<(Message, Usage), String> {
+) -> Result<(Message, Usage, StopReason), String> {
     if stream {
         let mut events = client
             .stream(model, ctx, opts)
@@ -133,8 +143,15 @@ async fn one_turn(
         while let Some(event) = events.next().await {
             match event.map_err(|e| e.to_string())? {
                 StreamEvent::TextDelta { delta, .. } => observer(RunEvent::TextDelta(&delta)),
-                StreamEvent::Done { usage, message, .. } => return Ok((message, usage)),
-                StreamEvent::ThinkingDelta { .. } | StreamEvent::ToolCallDelta { .. } => {}
+                StreamEvent::ThinkingDelta { delta, .. } => {
+                    observer(RunEvent::ThinkingDelta(&delta))
+                }
+                StreamEvent::Done {
+                    usage,
+                    message,
+                    stop_reason,
+                } => return Ok((message, usage, stop_reason)),
+                StreamEvent::ToolCallDelta { .. } => {}
             }
         }
         Err("stream ended without a final event".to_string())
@@ -144,11 +161,13 @@ async fn one_turn(
             .await
             .map_err(|e| e.to_string())?;
         for block in &completion.message.content {
-            if let ContentBlock::Text { text } = block {
-                observer(RunEvent::Text(text));
+            match block {
+                ContentBlock::Text { text } => observer(RunEvent::Text(text)),
+                ContentBlock::Thinking { thinking } => observer(RunEvent::Thinking(thinking)),
+                _ => {}
             }
         }
-        Ok((completion.message, completion.usage))
+        Ok((completion.message, completion.usage, completion.stop_reason))
     }
 }
 
