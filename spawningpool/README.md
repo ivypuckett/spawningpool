@@ -86,6 +86,20 @@ async fn main() -> Result<(), String> {
 }
 ```
 
+## Forcing structured output
+
+A [`Specialist`] with a `constraint` forces one call to a named tool, making the
+tool's parameters a structured-output schema. By default this uses the
+**tool-call trick**: rather than relying on grammar-constrained decoding (which
+not every endpoint supports), the request forces a tool call whose arguments are
+the structured output — `tool_choice` on OpenAI-compatible endpoints, native
+forced tool choice on Anthropic — so it works on every provider.
+
+Setting `constrained_decoding` (from a [`ProviderDef`] declared with
+`--constrained-decoding`) upgrades to true grammar-constrained decoding. Only the
+OpenAI-compatible adapter honors it; the Anthropic adapter always uses native
+forced tool choice.
+
 ## Documentation
 
 - API docs: <https://docs.rs/spawningpool>

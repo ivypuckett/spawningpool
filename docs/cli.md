@@ -55,6 +55,10 @@ something inferred — two `openai-completions` endpoints can differ. It only
 affects how a constrained specialist forces its tool call; see
 [`--constraint`](#specialist) below.
 
+**Only `openai-completions` providers honor this flag.** `anthropic` providers
+ignore it and always force the call with native tool choice, so setting it on an
+Anthropic provider has no effect.
+
 ```sh
 # Hosted Claude
 spawningpool define provider anthropic --api anthropic \
@@ -111,13 +115,18 @@ spawningpool define specialist <name> \
   and the run ends. A forced call is incompatible with reasoning, so a
   constrained specialist must keep `--reasoning off` (enforced at define time).
 
-  How the forced call is realized depends on the provider:
-  - If the provider was defined `--constrained-decoding`, the call uses true
-    grammar-constrained decoding (`response_format` built from the tool's
-    parameter schema) — the model's output is guaranteed to match the schema.
-  - Otherwise it uses the portable `tool_choice: "required"`, which works across
-    OpenAI-compatible servers and Anthropic. (Streaming is disabled for a
-    constrained-decoding run, since its single output is the tool arguments.)
+  How the forced call is realized depends on the provider. By default it uses the
+  portable **tool-call trick** — forcing a tool call (`tool_choice: "required"`
+  on `openai-completions`, native forced tool choice on `anthropic`) whose
+  arguments are the structured output — which works on every provider out of the
+  box. True grammar-constrained decoding is an opt-in upgrade on top:
+  - If an `openai-completions` provider was defined `--constrained-decoding`, the
+    call instead uses grammar-constrained decoding (`response_format` built from
+    the tool's parameter schema) — the model's output is guaranteed to match the
+    schema. (Streaming is disabled for this run, since its single output is the
+    tool arguments.)
+  - Every other case — any `anthropic` provider, or an `openai-completions`
+    provider without the flag — uses the tool-call trick above.
 
 ```sh
 # Agentic: the model picks tools

@@ -69,7 +69,9 @@ pub struct CompleteOptions {
     /// (grammar-constrained `response_format`) instead of `tool_choice`. Only the
     /// OpenAI-compatible adapter honors this, and only when the provider it talks
     /// to actually supports it — it's a user-declared capability on the provider.
-    /// When unset, the forced call uses the more portable `tool_choice` instead.
+    /// When unset, the forced call uses the more portable "tool-call trick": it
+    /// forces a `tool_choice` whose arguments are the structured output, which
+    /// works on every provider (the Anthropic adapter always takes this path).
     pub constrained_decoding: bool,
     /// Explicit API key, overriding any environment variable.
     pub api_key: Option<String>,

@@ -73,8 +73,13 @@ pub struct ProviderDef {
     /// Whether this provider's endpoint supports true constrained decoding
     /// (grammar-constrained `response_format`). User-declared, since it can't be
     /// inferred from the wire protocol — two `openai-completions` endpoints can
-    /// differ. When set, a constrained specialist on this provider realizes its
-    /// forced call via constrained decoding; otherwise via `tool_choice`.
+    /// differ.
+    ///
+    /// Only `openai-completions` providers honor this: when set, a constrained
+    /// specialist realizes its forced call via constrained decoding; otherwise via
+    /// the "tool-call trick" (a forced `tool_choice`). The `anthropic-messages`
+    /// adapter ignores the flag and always uses native forced tool choice, so
+    /// setting it there has no effect.
     #[serde(default)]
     pub constrained_decoding: bool,
 }
@@ -120,8 +125,9 @@ pub struct Specialist {
     /// References [`ToolDef`]s by name.
     #[serde(default)]
     pub tools: Vec<String>,
-    /// A tool the model is forced to call (constrained decoding). Consumed when
-    /// the specialist is run, not when its context is built.
+    /// A tool the model is forced to call (via the tool-call trick, or true
+    /// constrained decoding when the provider declares it). Consumed when the
+    /// specialist is run, not when its context is built.
     #[serde(default)]
     pub constraint: Option<String>,
     #[serde(default)]

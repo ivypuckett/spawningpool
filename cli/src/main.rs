@@ -142,7 +142,9 @@ enum DefineEntity {
         /// Comma-separated tool names.
         #[arg(long)]
         tools: Option<String>,
-        /// A tool the specialist is forced to call (constrained decoding).
+        /// A tool the specialist is forced to call. Realized via the portable
+        /// tool-call trick (forced `tool_choice`), or grammar-constrained decoding
+        /// if the provider was defined `--constrained-decoding`.
         #[arg(long)]
         constraint: Option<String>,
         #[arg(long, default_value = "off")]
