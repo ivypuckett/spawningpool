@@ -23,6 +23,7 @@ struct Cli {
 #[derive(clap::ValueEnum, Clone)]
 enum OutputFormat {
     Json,
+    Plaintext,
 }
 
 #[derive(Subcommand)]
@@ -34,9 +35,9 @@ enum Command {
         specialist: String,
         #[arg(long)]
         prompt: String,
-        /// Output format. Omit for plain text; use `json` for a machine-readable
-        /// envelope with output, thinking, token counts, stopReason, model,
-        /// specialist, turns, and toolCalls.
+        /// Output format. Defaults to `json` (machine-readable envelope with
+        /// output, thinking, token counts, stopReason, model, specialist,
+        /// turns, and toolCalls). Use `plaintext` for streaming terminal output.
         #[arg(long, value_name = "FORMAT")]
         output: Option<OutputFormat>,
     },
@@ -418,7 +419,7 @@ async fn run_specialist(
     let client = Client::new();
 
     match output {
-        Some(OutputFormat::Json) => {
+        None | Some(OutputFormat::Json) => {
             let mut output = String::new();
             let mut thinking = String::new();
             let mut input_tokens: u32 = 0;
@@ -480,7 +481,7 @@ async fn run_specialist(
             );
             Ok(())
         }
-        None => {
+        Some(OutputFormat::Plaintext) => {
             // Render the run to the terminal: assistant text on stdout (streamed
             // live), usage and tool failures on stderr, tool output on stdout.
             // `printed_text` tracks streamed deltas so a trailing newline lands
