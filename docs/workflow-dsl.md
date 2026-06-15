@@ -109,26 +109,28 @@ This means no new return plumbing is needed; the DSL consumes what
 A workflow is a flat **series of statements** separated by a **double newline**,
 and most statements are assignments. There are **no separate variable type
 declarations** in v1: a variable is introduced by assigning to it, and its type
-is inferred from the assigned expression.
+is inferred from the assigned expression. Variable names are camelCase. (Tool
+param keys stay in their env-var form, e.g. `CITY`, since they're passed as
+environment variables; see §3.)
 
 ```
-CITY = "Portland"
+city = "Portland"
 
-weather = call get_weather { CITY: CITY }
+weather = call get_weather { CITY: city }
 
 summary = ask reporter ("Summarize: " + weather.summary)
 
-result = { "city": CITY, "ok": weather.reachable, "report": summary.output }
+result = { "city": city, "ok": weather.reachable, "report": summary.output }
 ```
 
-Here `CITY` has type `string` (inferred from the literal), `weather` has the
+Here `city` has type `string` (inferred from the literal), `weather` has the
 `get_weather` tool's declared `# output:` type, and `summary` has the unified
 specialist envelope type (§4) — so the access in later statements is
 type-checked against those.
 
 The value the workflow produces is written to its own `$SP_OUTPUT_PATH`, so a
-workflow is itself composable as a tool. How that value is designated (final
-statement vs. a dedicated form) is an open decision; see §8.
+workflow is itself composable as a tool. How that value is designated is
+deferred; see §8.
 
 The common idiom is to **assign** a control-flow expression rather than write it
 bare: `var = if (...) ..., (_) ...` and `var = foreach [item: arr] (...)`. The
@@ -157,7 +159,8 @@ introduces a local binding; see §6.5.)
 
 ### 6.3 Operators
 
-- Logical: `||`, `&&`, `!`
+- Logical: `||`, `&&`, `!` — operands must be `bool`. There is **no
+  truthiness**: non-`bool` values are not coerced, they're a type error.
 - Arithmetic: `+`, `-`, `*`, `/`, `%`, `^` (where `^` is power)
 - **No operator precedence.** Evaluation is strictly left-to-right; use
   parentheses to group. So `(1 + 2 - 3 / 4 % 5 ^ 6)` evaluates left to right.
@@ -169,9 +172,10 @@ introduces a local binding; see §6.5.)
 if (expr) result, (expr) result, ..., (_) result
 ```
 
-The first branch whose condition is truthy yields its result. **A selection must
-always end with the `(_)` default branch.** No per-branch variable binding in v1.
-This is an expression; the common form is `var = if (...) ..., (_) ...` (§5).
+The first branch whose condition is `true` yields its result; each condition
+must be a `bool` (no truthiness — see §6.3). **A selection must always end with
+the `(_)` default branch.** No per-branch variable binding in v1. This is an
+expression; the common form is `var = if (...) ..., (_) ...` (§5).
 
 ### 6.5 Iteration (for)
 
@@ -219,10 +223,10 @@ Access is type-directed:
 - A literal/quoted key requires an object type that **declares** that key, and
   yields that key's declared type.
 - An index requires an array type and yields its element type.
-- Computed `var.(expr)` is allowed on **arrays** (yields the element type). On
-  objects it is allowed only when all declared value types are identical (so the
-  result type is statically known); otherwise it is a v1 error. See open
-  decisions.
+- Computed `var.(expr)` is, in v1, allowed only on **arrays** (yields the element
+  type). Computed access into objects is deferred — a computed key could resolve
+  to keys of differing declared types, so the result type isn't statically
+  known. See §8.
 
 ## 7. Errors are data
 
@@ -235,26 +239,19 @@ call:
 - A specialist's outcome (including `stopReason` and per-call `success`) is part
   of its returned envelope (§4), so callers branch on it explicitly.
 
-## 8. Open decisions (need a call before implementation)
+## 8. Deferred
 
-These are intentionally not pinned yet; each has a recommended default:
+Pushed past v1; each has a likely direction to revisit when picked up:
 
 1. **Workflow invocation / CLI surface, how external inputs are supplied, and how
-   the output value is designated.** How a workflow is defined and run (e.g.
-   `spawningpool run --workflow <file>`), whether workflows live beside tools so they
-   nest uniformly, how external inputs reach the workflow (v1 has no typed input
-   declarations, so this is unspecified), and how a workflow names the value
-   written to `$SP_OUTPUT_PATH` — the value of the final statement, or a dedicated
-   form. *Recommended:* treat a workflow as a tool-like artifact runnable via a
-   new `run --workflow` flag, with the last statement's value as the output.
-2. **Exit-code semantics for tools in a workflow.** With "errors are data," a
-   non-zero exit is informational. *Recommended:* the runner records the exit
-   code but does not abort; if the tool wrote no output file, that is a runtime
-   error surfaced as a workflow failure (since v1 trusts the header to declare an
-   output).
-3. **Computed access into heterogeneous objects** (§6.8). *Recommended:* reject
-   in v1 (require uniform value types or an array), revisit when an `any` type
-   lands.
-4. **Truthiness** for `if` conditions and logical ops on non-bool values.
-   *Recommended:* require `bool` in v1 (no implicit coercion), consistent with
-   "force everything to be declared."
+   the output value is designated.** How a workflow is defined and run, whether
+   workflows live beside tools so they nest uniformly, how external inputs reach
+   the workflow, and how a workflow names the value written to `$SP_OUTPUT_PATH`.
+   *Likely:* a tool-like artifact runnable via a new `run --workflow` flag, with
+   the last statement's value as the output.
+2. **Error logging / exit-code semantics for tools in a workflow.** "Errors are
+   data" (§7) is the principle; how a tool's exit code and absent/garbled output
+   file are recorded and surfaced is deferred.
+3. **Computed access into objects** (§6.8). A computed key into an object can hit
+   keys of differing declared types, so the result type isn't statically known.
+   Deferred until there's a type story for it (e.g. an `any`/union type).
