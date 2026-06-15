@@ -6,6 +6,7 @@ pub mod run;
 pub mod store;
 pub mod tools;
 pub mod types;
+pub mod workflow;
 
 mod script;
 pub use script::{prepare_script, run_script, summarize, ScriptError, ScriptRun, ScriptSummary};
