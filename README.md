@@ -188,9 +188,9 @@ against the tool's JSON Schema and feeds violations back to the model to retry.
 
 - **pi SDK:** an excellent SDK we drew from, but not used as a dependency — it does not support constrained decoding, which is a core feature here.
 
-## Simplifications
+## Orchestration
 
-- A chain is a sequence/selection/iteration of specialists. Bash and scripting allows for this and provides an existing abstraction/entry point. The project does not prioritize shared memory. Therefore, bash is sufficient. If better tooling is desired, LangGraph and Mastra have both invested in this space and could be used alongside it.
+- A chain is a sequence/selection/iteration of specialists and tools. The project ships a small **workflow DSL** for this — a conceptual superset of JSON that adds typed declarations, expressions, selection, iteration, tool calls, and specialist calls, passing typed structured data between steps. See [Workflow DSL](docs/workflow-dsl.md). (Earlier versions deferred this to bash; that is no longer the case. Bash still composes specialists fine for one-off, untyped cases — see [Chaining specialists](docs/tools.md#chaining-specialists) — and LangGraph or Mastra remain options for richer orchestration.)
 
 ## Build & test
 
