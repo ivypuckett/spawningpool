@@ -4,7 +4,8 @@
 use std::path::{Path, PathBuf};
 
 use clap::{Parser, Subcommand};
-use spawningpool::ai::{Api, Client, Reasoning, StopReason};
+use spawningpool::ai::{Api, Client, CompleteOptions, Reasoning, StopReason};
+use spawningpool::workflow::{AccessKey, Expr, Workflow};
 use spawningpool::{
     EntityKind, ModelDef, ProviderDef, Referrer, Registry, RunEvent, ScriptError, Specialist,
 };
@@ -28,18 +29,11 @@ enum OutputFormat {
 
 #[derive(Subcommand)]
 enum Command {
-    /// Run a specialist against a prompt.
+    /// Run a specialist, workflow, or tool.
     #[command(alias = "spawn")]
     Run {
-        #[arg(long)]
-        specialist: String,
-        #[arg(long)]
-        prompt: String,
-        /// Output format. Defaults to `json` (machine-readable envelope with
-        /// output, thinking, token counts, stopReason, model, specialist,
-        /// turns, and toolCalls). Use `plaintext` for streaming terminal output.
-        #[arg(long, value_name = "FORMAT")]
-        output: Option<OutputFormat>,
+        #[command(subcommand)]
+        target: RunTarget,
     },
     /// List defined entities.
     List {
@@ -63,6 +57,31 @@ enum Command {
     },
     /// Browse and manage everything in an interactive terminal UI.
     Tui,
+}
+
+#[derive(Subcommand)]
+enum RunTarget {
+    /// Run a specialist against a prompt.
+    #[command(aliases = ["lenny", "ling"])]
+    Specialist {
+        name: String,
+        #[arg(long)]
+        prompt: String,
+        /// Output format. Defaults to `json` (machine-readable envelope with
+        /// output, thinking, token counts, stopReason, model, specialist,
+        /// turns, and toolCalls). Use `plaintext` for streaming terminal output.
+        #[arg(long, value_name = "FORMAT")]
+        output: Option<OutputFormat>,
+    },
+    /// Execute a workflow from the `workflows/` folder, by name.
+    Workflow { name: String },
+    /// Run a single tool script directly, by name.
+    Tool {
+        name: String,
+        /// A tool parameter, as `KEY=VALUE`. Repeatable.
+        #[arg(long = "arg", value_name = "KEY=VALUE")]
+        args: Vec<String>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -192,11 +211,15 @@ async fn run(cli: Cli) -> Result<(), String> {
         // Bare `spawningpool` reads where you are in the provider → model → specialist →
         // run progression and shows the next step.
         None => status(),
-        Some(Command::Run {
-            specialist,
-            prompt,
-            output,
-        }) => run_specialist(&specialist, &prompt, output).await,
+        Some(Command::Run { target }) => match target {
+            RunTarget::Specialist {
+                name,
+                prompt,
+                output,
+            } => run_specialist(&name, &prompt, output).await,
+            RunTarget::Workflow { name } => run_workflow(&name).await,
+            RunTarget::Tool { name, args } => run_tool(&name, &args),
+        },
         Some(Command::List { kind }) => list(kind).await,
         Some(Command::Show { entity }) => show(entity),
         Some(Command::Define { entity }) => define(entity),
@@ -350,7 +373,7 @@ fn ready_state(registry: &Registry) -> String {
         "Run a specialist against a prompt:".to_string(),
         String::new(),
         format!(
-            "      spawningpool run --specialist {} --prompt '<your prompt>'",
+            "      spawningpool run specialist {} --prompt '<your prompt>'",
             specialist.name
         ),
         String::new(),
@@ -518,6 +541,145 @@ async fn run_specialist(
             .await
         }
     }
+}
+
+/// Execute a workflow from the `workflows/` folder by name: parse it, resolve
+/// the tool catalog, type-check, then evaluate. Prints the workflow's result
+/// value as JSON.
+async fn run_workflow(name: &str) -> Result<(), String> {
+    let registry = spawningpool::store::load()?;
+    let source = spawningpool::workflow::source(&spawningpool::store::workflows_dir(), name)?;
+    let workflow = spawningpool::workflow::parse(&source)
+        .map_err(|e| format!("workflow '{name}' is invalid: {e}"))?;
+
+    // Resolve every tool in the catalog so both `call` expressions and the tools
+    // a specialist needs are available to the evaluator.
+    let tools_dir = spawningpool::store::tools_dir();
+    let tool_names = spawningpool::tools::list(&tools_dir)?;
+    let tools = spawningpool::tools::resolve_all(&tools_dir, &tool_names)?;
+
+    spawningpool::workflow::check(&workflow, &registry, &tools)
+        .map_err(|e| format!("workflow '{name}' failed type-checking: {e}"))?;
+
+    let opts = workflow_base_opts(&workflow, &registry)?;
+    let client = Client::new();
+    let result = spawningpool::workflow::eval(&workflow, &registry, &tools, &client, &opts)
+        .await
+        .map_err(|e| format!("workflow '{name}' failed: {e}"))?;
+    println!("{result}");
+    Ok(())
+}
+
+/// Source the single `api_key` / `constrained_decoding` the evaluator applies to
+/// every specialist call. Workflow DSL v1 assumes the specialists a workflow
+/// invokes share one provider; if they span providers we can't pick one key, so
+/// we report that rather than guess. A tool-only workflow needs no key.
+fn workflow_base_opts(workflow: &Workflow, registry: &Registry) -> Result<CompleteOptions, String> {
+    let mut specialists = std::collections::BTreeSet::new();
+    for stmt in &workflow.statements {
+        collect_specialists(&stmt.expr, &mut specialists);
+    }
+
+    let mut providers = std::collections::BTreeSet::new();
+    for spec_name in &specialists {
+        if let Some(spec) = registry.specialists.get(spec_name) {
+            providers.insert(spec.provider.clone());
+        }
+    }
+
+    let mut opts = CompleteOptions::default();
+    let provider_name = match providers.len() {
+        0 => return Ok(opts),
+        1 => providers.into_iter().next().expect("len checked"),
+        _ => {
+            let names: Vec<_> = providers.into_iter().collect();
+            return Err(format!(
+                "workflow uses specialists across multiple providers ({}); \
+                 v1 workflows require all specialists to share one provider",
+                names.join(", ")
+            ));
+        }
+    };
+
+    if let Some(provider) = registry.providers.get(&provider_name) {
+        if let Some(env) = provider.api_key_env.as_ref() {
+            if let Ok(key) = std::env::var(env) {
+                opts.api_key = Some(key);
+            }
+        }
+        opts.constrained_decoding = provider.constrained_decoding;
+    }
+    Ok(opts)
+}
+
+/// Collect the names of every specialist invoked by `ask` anywhere in `expr`.
+fn collect_specialists(expr: &Expr, out: &mut std::collections::BTreeSet<String>) {
+    match expr {
+        Expr::Str(_) | Expr::Num(_) | Expr::Bool(_) | Expr::Var(_) => {}
+        Expr::Object(fields) => {
+            for (_, e) in fields {
+                collect_specialists(e, out);
+            }
+        }
+        Expr::Not(inner) => collect_specialists(inner, out),
+        Expr::BinOp { lhs, rhs, .. } => {
+            collect_specialists(lhs, out);
+            collect_specialists(rhs, out);
+        }
+        Expr::Access { base, keys } => {
+            collect_specialists(base, out);
+            for key in keys {
+                if let AccessKey::Computed(e) = key {
+                    collect_specialists(e, out);
+                }
+            }
+        }
+        Expr::If { branches, default } => {
+            for (cond, result) in branches {
+                collect_specialists(cond, out);
+                collect_specialists(result, out);
+            }
+            collect_specialists(default, out);
+        }
+        Expr::For { array, body, .. } => {
+            collect_specialists(array, out);
+            collect_specialists(body, out);
+        }
+        Expr::Call { args, .. } => {
+            for (_, e) in args {
+                collect_specialists(e, out);
+            }
+        }
+        Expr::Ask { specialist, prompt } => {
+            out.insert(specialist.clone());
+            collect_specialists(prompt, out);
+        }
+    }
+}
+
+/// Run a single tool script directly, with `KEY=VALUE` params, and print the
+/// structured JSON the tool writes to `$SP_OUTPUT_PATH`.
+fn run_tool(name: &str, args: &[String]) -> Result<(), String> {
+    let tool = spawningpool::tools::resolve(&spawningpool::store::tools_dir(), name)?;
+
+    let mut vars = HashMap::new();
+    for arg in args {
+        let (key, value) = arg
+            .split_once('=')
+            .ok_or_else(|| format!("invalid --arg '{arg}': expected KEY=VALUE"))?;
+        vars.insert(key.to_string(), value.to_string());
+    }
+
+    let run = spawningpool::run_script(&tool.script, &vars)
+        .map_err(|e| format!("failed to run tool '{name}': {e}"))?;
+
+    let output = run.structured_output.ok_or_else(|| {
+        format!(
+            "tool '{name}' didn't write to $SP_OUTPUT_PATH; it has no structured output to show"
+        )
+    })?;
+    println!("{output}");
+    Ok(())
 }
 
 async fn list(kind: ListKind) -> Result<(), String> {
@@ -1350,7 +1512,7 @@ mod tests {
         );
         let msg = onboarding_message(&reg);
         assert!(msg.contains("[4/4]"));
-        assert!(msg.contains("spawningpool run --specialist spec"));
+        assert!(msg.contains("spawningpool run specialist spec"));
     }
 
     #[test]

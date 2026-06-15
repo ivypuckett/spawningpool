@@ -82,7 +82,7 @@ spawningpool define specialist namer --provider anthropic --model claude-opus-4-
 ### 4. Run it
 
 ```sh
-spawningpool run --specialist namer --prompt 'A CLI that spawns AI specialists'
+spawningpool run specialist namer --prompt 'A CLI that spawns AI specialists'
 ```
 
 By default this prints a JSON result envelope (the assistant text is the

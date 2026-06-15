@@ -12,7 +12,7 @@ treated as empty, so the first `define` creates it. See
 - [`spawningpool list`](#spawningpool-list) — list names
 - [`spawningpool show`](#spawningpool-show) — print one definition
 - [`spawningpool delete`](#spawningpool-delete) — remove an entity
-- [`spawningpool run`](#spawningpool-run) — run a specialist
+- [`spawningpool run`](#spawningpool-run) — run a specialist, workflow, or tool
 
 ---
 
@@ -102,7 +102,7 @@ spawningpool define specialist <name> \
   [--tools 'a,b,c']            # comma-separated; the model freely calls these
   [--constraint 'tool']        # OR: force exactly one call to this tool
   [--reasoning off|low|medium|high]   # default off
-  [--stream]                   # stream output token-by-token (only visible with `run --output plaintext`)
+  [--stream]                   # stream output token-by-token (only visible with `run specialist --output plaintext`)
 ```
 
 `--tools` and `--constraint` are **mutually exclusive**:
@@ -216,15 +216,20 @@ spawningpool delete tool ping
 
 ## `spawningpool run`
 
-Instantiates a specialist with a prompt and runs it. Alias: `spawningpool spawn`.
+Runs a specialist, a workflow, or a tool. Alias: `spawningpool spawn`.
 
 ```sh
-spawningpool run --specialist <name> --prompt '<prompt>' \
-  [--output <json|plaintext>]   # default json
+spawningpool run specialist <name> --prompt '<prompt>' [--output <json|plaintext>]
+spawningpool run workflow <name>
+spawningpool run tool <name> [--arg KEY=VALUE]...
 ```
 
+### `run specialist`
+
+Instantiates a specialist with a prompt and runs it.
+
 ```sh
-spawningpool run --specialist netop --prompt 'Why can I not reach example.com?'
+spawningpool run specialist netop --prompt 'Why can I not reach example.com?'
 ```
 
 `--output` chooses the format:
@@ -242,12 +247,36 @@ spawningpool run --specialist netop --prompt 'Why can I not reach example.com?'
 
 ```sh
 # Pipe-friendly default: parse the JSON envelope
-spawningpool run --specialist netop --prompt 'reachable?' | jq -r .output
+spawningpool run specialist netop --prompt 'reachable?' | jq -r .output
 
 # Watch it stream in a terminal
-spawningpool run --specialist writer --prompt 'tagline' --output plaintext
+spawningpool run specialist writer --prompt 'tagline' --output plaintext
 ```
 
 The API key is sourced from the provider's `--api-key-env` variable at run time;
 if it isn't set you'll get an auth error (bare `spawningpool` warns about this in advance).
 An agentic specialist that never stops calling tools fails after 16 turns.
+
+### `run workflow`
+
+Executes a workflow from the `workflows/` folder beside the registry, by name
+(the file name with any extension stripped, like tools). The workflow is parsed,
+type-checked against the tool catalog and registry, then evaluated; its result
+value is printed as JSON on stdout. See [the Workflow DSL](workflow-dsl.md).
+
+```sh
+spawningpool run workflow triage
+```
+
+Specialists invoked by the workflow's `ask` expressions must share one provider
+(v1); the API key is sourced from that provider's `--api-key-env`. A workflow
+that only calls tools needs no key.
+
+### `run tool`
+
+Runs a single tool script directly, passing parameters as `KEY=VALUE`. Prints
+the JSON the tool writes to `$SP_OUTPUT_PATH`.
+
+```sh
+spawningpool run tool ping --arg HOST=example.com --arg COUNT=3
+```

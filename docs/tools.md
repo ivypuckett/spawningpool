@@ -126,7 +126,7 @@ spawningpool define specialist netop --provider anthropic --model claude-opus-4-
   --tools ping
 
 # 5. Run
-spawningpool run --specialist netop --prompt 'Can you reach example.com?'
+spawningpool run specialist netop --prompt 'Can you reach example.com?'
 ```
 
 ## Forcing a tool call (constraint)
@@ -149,7 +149,7 @@ spawningpool define specialist sentiment --provider anthropic --model claude-opu
   --system-prompt 'Classify the sentiment as positive, negative, or neutral, then call classify.' \
   --constraint classify          # note: reasoning must stay off with --constraint
 
-spawningpool run --specialist sentiment --prompt 'I absolutely love this!'
+spawningpool run specialist sentiment --prompt 'I absolutely love this!'
 ```
 
 The forced call works on any provider out of the box via the **tool-call trick**:
@@ -174,8 +174,8 @@ There is no built-in chain abstraction — by design. A specialist's stdout is
 plain text, so compose them with the shell:
 
 ```sh
-topic=$(spawningpool run --specialist namer --prompt 'a tool that spawns agents')
-spawningpool run --specialist writer --prompt "Write a one-line tagline for: $topic"
+topic=$(spawningpool run specialist namer --prompt 'a tool that spawns agents')
+spawningpool run specialist writer --prompt "Write a one-line tagline for: $topic"
 ```
 
 For richer orchestration, drive `spawningpool run` from any language or a workflow tool
