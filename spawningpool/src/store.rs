@@ -35,6 +35,16 @@ pub fn tools_dir() -> PathBuf {
     }
 }
 
+/// The directory holding workflow scripts: a `workflows/` folder alongside the
+/// registry file. Like tools, workflows aren't stored in `registry.json`; each
+/// is just a DSL source file in this folder, named after the workflow.
+pub fn workflows_dir() -> PathBuf {
+    match registry_path().parent() {
+        Some(parent) if !parent.as_os_str().is_empty() => parent.join("workflows"),
+        _ => PathBuf::from("workflows"),
+    }
+}
+
 /// Load the registry from its resolved path. A missing file is an empty registry.
 pub fn load() -> Result<Registry, String> {
     load_from(&registry_path())
@@ -221,6 +231,33 @@ mod tests {
         std::env::remove_var("SPAWNINGPOOL_HOME");
         std::env::set_var("HOME", "/tmp/user");
         assert_eq!(tools_dir(), PathBuf::from("/tmp/user/.spawningpool/tools"));
+
+        restore("SPAWNINGPOOL_REGISTRY", saved.0);
+        restore("SPAWNINGPOOL_HOME", saved.1);
+        restore("HOME", saved.2);
+    }
+
+    #[test]
+    fn workflows_dir_sits_beside_the_registry_file() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let saved = (
+            std::env::var_os("SPAWNINGPOOL_REGISTRY"),
+            std::env::var_os("SPAWNINGPOOL_HOME"),
+            std::env::var_os("HOME"),
+        );
+
+        // An explicit registry path puts workflows/ next to that file.
+        std::env::set_var("SPAWNINGPOOL_REGISTRY", "/tmp/explicit.json");
+        assert_eq!(workflows_dir(), PathBuf::from("/tmp/workflows"));
+
+        // Under HOME: ~/.spawningpool/workflows.
+        std::env::remove_var("SPAWNINGPOOL_REGISTRY");
+        std::env::remove_var("SPAWNINGPOOL_HOME");
+        std::env::set_var("HOME", "/tmp/user");
+        assert_eq!(
+            workflows_dir(),
+            PathBuf::from("/tmp/user/.spawningpool/workflows")
+        );
 
         restore("SPAWNINGPOOL_REGISTRY", saved.0);
         restore("SPAWNINGPOOL_HOME", saved.1);
