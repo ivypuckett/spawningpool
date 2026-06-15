@@ -4,8 +4,7 @@
 use std::path::{Path, PathBuf};
 
 use clap::{Parser, Subcommand};
-use spawningpool::ai::{Api, Client, CompleteOptions, Reasoning, StopReason};
-use spawningpool::workflow::{AccessKey, Expr, Workflow};
+use spawningpool::ai::{Api, Client, Reasoning, StopReason};
 use spawningpool::{
     EntityKind, ModelDef, ProviderDef, Referrer, Registry, RunEvent, ScriptError, Specialist,
 };
@@ -561,100 +560,28 @@ async fn run_workflow(name: &str) -> Result<(), String> {
     spawningpool::workflow::check(&workflow, &registry, &tools)
         .map_err(|e| format!("workflow '{name}' failed type-checking: {e}"))?;
 
-    let opts = workflow_base_opts(&workflow, &registry)?;
+    let keys = provider_keys(&registry);
     let client = Client::new();
-    let result = spawningpool::workflow::eval(&workflow, &registry, &tools, &client, &opts)
+    let result = spawningpool::workflow::eval(&workflow, &registry, &tools, &client, &keys)
         .await
         .map_err(|e| format!("workflow '{name}' failed: {e}"))?;
     println!("{result}");
     Ok(())
 }
 
-/// Source the single `api_key` / `constrained_decoding` the evaluator applies to
-/// every specialist call. Workflow DSL v1 assumes the specialists a workflow
-/// invokes share one provider; if they span providers we can't pick one key, so
-/// we report that rather than guess. A tool-only workflow needs no key.
-fn workflow_base_opts(workflow: &Workflow, registry: &Registry) -> Result<CompleteOptions, String> {
-    let mut specialists = std::collections::BTreeSet::new();
-    for stmt in &workflow.statements {
-        collect_specialists(&stmt.expr, &mut specialists);
-    }
-
-    let mut providers = std::collections::BTreeSet::new();
-    for spec_name in &specialists {
-        if let Some(spec) = registry.specialists.get(spec_name) {
-            providers.insert(spec.provider.clone());
-        }
-    }
-
-    let mut opts = CompleteOptions::default();
-    let provider_name = match providers.len() {
-        0 => return Ok(opts),
-        1 => providers.into_iter().next().expect("len checked"),
-        _ => {
-            let names: Vec<_> = providers.into_iter().collect();
-            return Err(format!(
-                "workflow uses specialists across multiple providers ({}); \
-                 v1 workflows require all specialists to share one provider",
-                names.join(", ")
-            ));
-        }
-    };
-
-    if let Some(provider) = registry.providers.get(&provider_name) {
+/// Map each provider to its API key, read from the provider's configured
+/// `api_key_env`. A provider with no key env, or whose env isn't set, is simply
+/// omitted; specialists on it run without a key (matching `run specialist`).
+fn provider_keys(registry: &Registry) -> HashMap<String, String> {
+    let mut keys = HashMap::new();
+    for provider in registry.providers.values() {
         if let Some(env) = provider.api_key_env.as_ref() {
             if let Ok(key) = std::env::var(env) {
-                opts.api_key = Some(key);
+                keys.insert(provider.name.clone(), key);
             }
-        }
-        opts.constrained_decoding = provider.constrained_decoding;
-    }
-    Ok(opts)
-}
-
-/// Collect the names of every specialist invoked by `ask` anywhere in `expr`.
-fn collect_specialists(expr: &Expr, out: &mut std::collections::BTreeSet<String>) {
-    match expr {
-        Expr::Str(_) | Expr::Num(_) | Expr::Bool(_) | Expr::Var(_) => {}
-        Expr::Object(fields) => {
-            for (_, e) in fields {
-                collect_specialists(e, out);
-            }
-        }
-        Expr::Not(inner) => collect_specialists(inner, out),
-        Expr::BinOp { lhs, rhs, .. } => {
-            collect_specialists(lhs, out);
-            collect_specialists(rhs, out);
-        }
-        Expr::Access { base, keys } => {
-            collect_specialists(base, out);
-            for key in keys {
-                if let AccessKey::Computed(e) = key {
-                    collect_specialists(e, out);
-                }
-            }
-        }
-        Expr::If { branches, default } => {
-            for (cond, result) in branches {
-                collect_specialists(cond, out);
-                collect_specialists(result, out);
-            }
-            collect_specialists(default, out);
-        }
-        Expr::For { array, body, .. } => {
-            collect_specialists(array, out);
-            collect_specialists(body, out);
-        }
-        Expr::Call { args, .. } => {
-            for (_, e) in args {
-                collect_specialists(e, out);
-            }
-        }
-        Expr::Ask { specialist, prompt } => {
-            out.insert(specialist.clone());
-            collect_specialists(prompt, out);
         }
     }
+    keys
 }
 
 /// Run a single tool script directly, with `KEY=VALUE` params, and print the

@@ -268,9 +268,9 @@ value is printed as JSON on stdout. See [the Workflow DSL](workflow-dsl.md).
 spawningpool run workflow triage
 ```
 
-Specialists invoked by the workflow's `ask` expressions must share one provider
-(v1); the API key is sourced from that provider's `--api-key-env`. A workflow
-that only calls tools needs no key.
+Each specialist invoked by the workflow's `ask` expressions authenticates with
+its own provider's key, sourced from that provider's `--api-key-env`; a workflow
+can freely mix providers. A workflow that only calls tools needs no key.
 
 ### `run tool`
 

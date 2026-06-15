@@ -6,8 +6,9 @@
 //! ## Usage
 //!
 //! ```rust,no_run
+//! use std::collections::HashMap;
 //! use spawningpool::workflow::{parse, check, eval};
-//! use spawningpool::ai::{Client, CompleteOptions};
+//! use spawningpool::ai::Client;
 //! use spawningpool::store;
 //!
 //! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
@@ -29,8 +30,9 @@
 //! check(&workflow, &registry, &tools)?;
 //!
 //! let client = Client::new();
-//! let opts = CompleteOptions::default();
-//! let result = eval(&workflow, &registry, &tools, &client, &opts).await?;
+//! // Map each provider to its API key (here: none needed for a tool-only workflow).
+//! let keys: HashMap<String, String> = HashMap::new();
+//! let result = eval(&workflow, &registry, &tools, &client, &keys).await?;
 //! println!("{result}");
 //! # Ok(())
 //! # }

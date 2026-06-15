@@ -9,7 +9,7 @@ use std::collections::HashMap;
 
 use futures::future::LocalBoxFuture;
 
-use crate::ai::{Client, CompleteOptions, StopReason};
+use crate::ai::{Client, StopReason};
 use crate::domain::{Registry, ToolDef};
 use crate::run::RunEvent;
 
@@ -32,7 +32,7 @@ struct EvalCtx<'a> {
     registry: &'a Registry,
     tools: &'a [ToolDef],
     client: &'a Client,
-    opts: &'a CompleteOptions,
+    keys: &'a HashMap<String, String>,
 }
 
 type Env = HashMap<String, serde_json::Value>;
@@ -40,8 +40,10 @@ type Env = HashMap<String, serde_json::Value>;
 /// Evaluate a workflow, executing its statements in order.
 ///
 /// `tools` must contain every tool referenced by `call` expressions in the
-/// workflow, pre-resolved with script paths. `opts` carries the base request
-/// options (API key, reasoning, etc.) applied to specialist calls.
+/// workflow, pre-resolved with script paths. `keys` maps a provider name to its
+/// API key; each specialist call is authenticated with its own provider's key
+/// (a provider absent from the map runs without one), and its constrained-decoding
+/// mode comes from that provider's definition in `registry`.
 ///
 /// Returns the value produced by the last statement, or `Null` if the workflow
 /// has no statements. Tool and specialist outputs compose through JSON values.
@@ -50,13 +52,13 @@ pub async fn eval(
     registry: &Registry,
     tools: &[ToolDef],
     client: &Client,
-    opts: &CompleteOptions,
+    keys: &HashMap<String, String>,
 ) -> Result<serde_json::Value, WorkflowError> {
     let ctx = EvalCtx {
         registry,
         tools,
         client,
-        opts,
+        keys,
     };
     let mut env = Env::new();
     let mut last = serde_json::Value::Null;
@@ -218,11 +220,15 @@ fn eval_expr<'ctx>(
                     })
                     .collect::<Result<_, _>>()?;
 
+                // Authenticate with the specialist's own provider: its key (if
+                // supplied) and its declared constrained-decoding capability.
                 let mut spec_opts = specialist.complete_options();
-                if let Some(key) = &ctx.opts.api_key {
+                if let Some(key) = ctx.keys.get(&specialist.provider) {
                     spec_opts.api_key = Some(key.clone());
                 }
-                spec_opts.constrained_decoding = ctx.opts.constrained_decoding;
+                if let Some(provider) = ctx.registry.providers.get(&specialist.provider) {
+                    spec_opts.constrained_decoding = provider.constrained_decoding;
+                }
 
                 let mut collected = Collector::default();
                 crate::run::run_specialist(
@@ -437,8 +443,8 @@ mod tests {
         let wf = parse(src).expect("parse failed");
         let registry = Registry::default();
         let client = crate::ai::Client::new();
-        let opts = CompleteOptions::default();
-        eval(&wf, &registry, &[], &client, &opts).await
+        let keys = HashMap::new();
+        eval(&wf, &registry, &[], &client, &keys).await
     }
 
     #[tokio::test]
@@ -527,12 +533,12 @@ mod tests {
         let arr = serde_json::json!([10, 20, 30]);
         let registry = Registry::default();
         let client = crate::ai::Client::new();
-        let opts = CompleteOptions::default();
+        let keys = HashMap::new();
         let ctx = EvalCtx {
             registry: &registry,
             tools: &[],
             client: &client,
-            opts: &opts,
+            keys: &keys,
         };
         let val = eval_access(arr, &AccessKey::Index(1), Env::new(), &ctx)
             .await
@@ -564,12 +570,12 @@ mod tests {
         env.insert("nums".to_string(), serde_json::json!([1, 2, 3]));
         let registry = Registry::default();
         let client = crate::ai::Client::new();
-        let opts = CompleteOptions::default();
+        let keys = HashMap::new();
         let ctx = EvalCtx {
             registry: &registry,
             tools: &[],
             client: &client,
-            opts: &opts,
+            keys: &keys,
         };
 
         let mut last = serde_json::Value::Null;
@@ -617,9 +623,9 @@ mod tests {
         let wf = parse(r#"result = call greet { NAME: "world" }"#).unwrap();
         let registry = Registry::default();
         let client = crate::ai::Client::new();
-        let opts = CompleteOptions::default();
+        let keys = HashMap::new();
 
-        let val = eval(&wf, &registry, &[tool_def], &client, &opts)
+        let val = eval(&wf, &registry, &[tool_def], &client, &keys)
             .await
             .unwrap();
         std::fs::remove_file(&script_path).ok();
@@ -653,9 +659,9 @@ mod tests {
         let wf = parse("result = call silent {}").unwrap();
         let registry = Registry::default();
         let client = crate::ai::Client::new();
-        let opts = CompleteOptions::default();
+        let keys = HashMap::new();
 
-        let err = eval(&wf, &registry, &[tool_def], &client, &opts)
+        let err = eval(&wf, &registry, &[tool_def], &client, &keys)
             .await
             .unwrap_err();
         std::fs::remove_file(&script_path).ok();
