@@ -106,30 +106,29 @@ This means no new return plumbing is needed; the DSL consumes what
 
 ## 5. Workflow structure
 
-There are **no `input`/`process`/`output` sections** — input/process/output is
-the conceptual shape, not literal syntax. A workflow is just a flat **series of
-statements** separated by a **double newline**, and most statements are
-assignments.
+A workflow is a flat **series of statements** separated by a **double newline**,
+and most statements are assignments. There are **no separate variable type
+declarations** in v1: a variable is introduced by assigning to it, and its type
+is inferred from the assigned expression.
 
 ```
-CITY: string
+CITY = "Portland"
 
-RETRIES: number
-
-weather = call get_weather { CITY: CITY, RETRIES: RETRIES }
+weather = call get_weather { CITY: CITY }
 
 summary = ask reporter ("Summarize: " + weather.summary)
 
 result = { "city": CITY, "ok": weather.reachable, "report": summary.output }
 ```
 
-- **Input** is declared with a typed statement `ENVKEY: jsonType` (e.g. `CITY:
-  string`). Like tool params, inputs arrive from the environment.
-- **Process** is the run of assignment/call/control-flow statements that follow.
-- **Output** — the value the workflow produces, written to its own
-  `$SP_OUTPUT_PATH` so a workflow is itself composable as a tool. How that value
-  is designated (final statement vs. a dedicated form) is an open decision; see
-  §8.
+Here `CITY` has type `string` (inferred from the literal), `weather` has the
+`get_weather` tool's declared `# output:` type, and `summary` has the unified
+specialist envelope type (§4) — so the access in later statements is
+type-checked against those.
+
+The value the workflow produces is written to its own `$SP_OUTPUT_PATH`, so a
+workflow is itself composable as a tool. How that value is designated (final
+statement vs. a dedicated form) is an open decision; see §8.
 
 The common idiom is to **assign** a control-flow expression rather than write it
 bare: `var = if (...) ..., (_) ...` and `var = foreach [item: arr] (...)`. The
@@ -152,8 +151,9 @@ construct.
 name = expr
 ```
 
-`name` is bound for the rest of the workflow. (Iteration introduces a local
-binding; see §6.5.)
+`name` is bound for the rest of the workflow, and its type is inferred from
+`expr` — there is no separate variable type declaration in v1. (Iteration
+introduces a local binding; see §6.5.)
 
 ### 6.3 Operators
 
@@ -239,13 +239,14 @@ call:
 
 These are intentionally not pinned yet; each has a recommended default:
 
-1. **Workflow invocation / CLI surface, and how the output value is designated.**
-   How a workflow is defined and run (e.g. `spawningpool run --workflow <file>`),
-   whether workflows live beside tools so they nest uniformly, and how a workflow
-   names the value written to `$SP_OUTPUT_PATH` — the value of the final statement,
-   or a dedicated form. *Recommended:* treat a workflow as a tool-like artifact
-   with typed inputs (env) and `$SP_OUTPUT_PATH` output, runnable via a new
-   `run --workflow` flag, with the last statement's value as the output.
+1. **Workflow invocation / CLI surface, how external inputs are supplied, and how
+   the output value is designated.** How a workflow is defined and run (e.g.
+   `spawningpool run --workflow <file>`), whether workflows live beside tools so they
+   nest uniformly, how external inputs reach the workflow (v1 has no typed input
+   declarations, so this is unspecified), and how a workflow names the value
+   written to `$SP_OUTPUT_PATH` — the value of the final statement, or a dedicated
+   form. *Recommended:* treat a workflow as a tool-like artifact runnable via a
+   new `run --workflow` flag, with the last statement's value as the output.
 2. **Exit-code semantics for tools in a workflow.** With "errors are data," a
    non-zero exit is informational. *Recommended:* the runner records the exit
    code but does not abort; if the tool wrote no output file, that is a runtime
