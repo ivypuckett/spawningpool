@@ -19,6 +19,7 @@ use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 
 use crate::ai::{Api, CompleteOptions, Model, Reasoning, Tool};
+use crate::types::{Param, Type};
 
 /// Which kind of registry entity a reference or referrer points at. Carried by
 /// [`MissingRef`] and [`Referrer`] so a front-end can describe it however it
@@ -198,25 +199,29 @@ pub struct ToolDef {
     pub name: String,
     pub script: PathBuf,
     pub description: String,
-    pub params: Vec<String>,
+    pub params: Vec<Param>,
+    /// The tool's declared `# output:` type (workflow-dsl §3), or `None`.
+    pub output: Option<Type>,
 }
 
 impl ToolDef {
     /// Lower into the runtime [`Tool`] the model sees, with each parameter
-    /// declared as a required string property.
+    /// declared as a required property of its declared type (a bare, untyped
+    /// param is `string`; see [`crate::types`]).
     pub fn to_tool(&self) -> Tool {
         let properties: serde_json::Map<String, serde_json::Value> = self
             .params
             .iter()
-            .map(|p| (p.clone(), serde_json::json!({ "type": "string" })))
+            .map(|p| (p.name.clone(), p.ty.to_schema()))
             .collect();
+        let required: Vec<&String> = self.params.iter().map(|p| &p.name).collect();
         Tool {
             name: self.name.clone(),
             description: self.description.clone(),
             parameters: serde_json::json!({
                 "type": "object",
                 "properties": properties,
-                "required": self.params,
+                "required": required,
             }),
         }
     }
@@ -373,21 +378,33 @@ mod tests {
     }
 
     #[test]
-    fn tool_def_lowers_vars_into_required_string_params() {
+    fn tool_def_lowers_params_into_required_typed_props() {
         let tool = ToolDef {
             name: "deploy".to_string(),
             script: PathBuf::from("deploy.sh"),
             description: "Deploy a service".to_string(),
-            params: vec!["env".to_string(), "region".to_string()],
+            params: vec![
+                Param {
+                    name: "env".to_string(),
+                    ty: Type::String,
+                },
+                Param {
+                    name: "replicas".to_string(),
+                    ty: Type::Number,
+                },
+            ],
+            output: None,
         }
         .to_tool();
 
         assert_eq!(tool.name, "deploy");
         assert_eq!(tool.parameters["type"], "object");
+        // Each param lowers to its declared type.
         assert_eq!(tool.parameters["properties"]["env"]["type"], "string");
+        assert_eq!(tool.parameters["properties"]["replicas"]["type"], "number");
         assert_eq!(
             tool.parameters["required"],
-            serde_json::json!(["env", "region"])
+            serde_json::json!(["env", "replicas"])
         );
     }
 

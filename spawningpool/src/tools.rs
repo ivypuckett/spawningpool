@@ -33,6 +33,7 @@ pub fn resolve(dir: &Path, name: &str) -> Result<ToolDef, String> {
         script,
         description: summary.desc.unwrap_or_default(),
         params: summary.params,
+        output: summary.output,
     })
 }
 
@@ -157,17 +158,29 @@ mod tests {
 
     #[test]
     fn resolve_reads_header_and_strips_extension() {
+        use crate::types::{Param, Type};
+
         let dir = temp_dir("resolve");
         write_tool(
             &dir,
             "ping.sh",
-            "#!/bin/sh\n# desc: Ping a host\n# params: HOST\necho hi\n",
+            "#!/bin/sh\n# desc: Ping a host\n# params: HOST\n# output: { \"ms\": number }\necho hi\n",
         );
 
         let tool = resolve(&dir, "ping").unwrap();
         assert_eq!(tool.name, "ping");
         assert_eq!(tool.description, "Ping a host");
-        assert_eq!(tool.params, vec!["HOST".to_string()]);
+        assert_eq!(
+            tool.params,
+            vec![Param {
+                name: "HOST".to_string(),
+                ty: Type::String,
+            }]
+        );
+        assert_eq!(
+            tool.output,
+            Some(Type::Object(vec![("ms".to_string(), Type::Number)]))
+        );
         assert!(tool.script.is_absolute());
 
         std::fs::remove_dir_all(&dir).ok();

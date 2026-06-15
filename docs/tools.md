@@ -40,14 +40,50 @@ echo "$GREETING, $NAME!"
   get a warning and an empty description), but a good description is what makes
   the model call the tool correctly.
 - `# params:` → the tool's **parameters**, separated by whitespace and/or commas.
-  Each becomes a required string argument.
+  Each becomes a required argument. A param may carry an optional `:type` suffix
+  (`NAME:type`); a bare `NAME` means `string`, so existing headers are unchanged.
+- `# output:` → the type of the structured result the tool writes (optional; see
+  [Structured output](#structured-output) below).
 - For each directive, the **first** matching comment line wins. Non-comment lines
   are ignored, so the header can sit anywhere.
+
+The type notation (used by `:type` suffixes and `# output:`) is `string`,
+`number`, `bool`, `[T]` for an array of `T`, and `{ "k": T, ... }` for an object
+with the listed (required) keys — for example:
+
+```sh
+# params: HOST:string, COUNT:number
+# output: { "host": string, "reachable": bool, "ms": number }
+```
+
+A `[]`/`{}` type may contain commas and spaces; only top-level commas and
+whitespace separate one param from the next. A malformed type in the header is an
+error. See [the Workflow DSL](workflow-dsl.md) for the full grammar and how these
+types are used to orchestrate tools.
 
 Each argument the model supplies is passed to the script as an **environment
 variable of the same name** — never interpolated into a command line, so there's
 no shell-injection surface. Non-string JSON values are passed as their JSON text
 (e.g. `3`, `true`, `[1,2]`).
+
+## Structured output
+
+A tool can return a structured result in addition to its logs. Before running a
+tool, the runner sets `SP_OUTPUT_PATH` to a fresh temp file; write your JSON
+result there, and it's read back as the tool's declared `# output:` type. stdout
+and stderr stay ordinary logs and are **not** parsed.
+
+```sh
+#!/bin/sh
+# desc: Look up a host's latency
+# params: HOST:string, COUNT:number
+# output: { "host": string, "reachable": bool, "ms": number }
+echo "pinging $HOST x$COUNT"          # logs -> stdout/stderr, as usual
+printf '{"host":"%s","reachable":true,"ms":12}' "$HOST" > "$SP_OUTPUT_PATH"
+```
+
+A tool that writes nothing to `$SP_OUTPUT_PATH` simply has no structured output —
+its logs are still returned as before.
 
 ## Requirements
 

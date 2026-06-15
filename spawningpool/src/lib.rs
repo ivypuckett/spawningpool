@@ -5,6 +5,7 @@ pub mod domain;
 pub mod run;
 pub mod store;
 pub mod tools;
+pub mod types;
 
 mod script;
 pub use script::{prepare_script, run_script, summarize, ScriptError, ScriptRun, ScriptSummary};
@@ -14,3 +15,5 @@ pub use run::{run_specialist, RunEvent};
 pub use domain::{
     EntityKind, MissingRef, ModelDef, ProviderDef, Referrer, Registry, Specialist, ToolDef,
 };
+
+pub use types::{Param, Type};
