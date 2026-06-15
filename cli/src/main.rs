@@ -551,16 +551,19 @@ async fn run_workflow(name: &str) -> Result<(), String> {
     let workflow = spawningpool::workflow::parse(&source)
         .map_err(|e| format!("workflow '{name}' is invalid: {e}"))?;
 
-    // Resolve every tool in the catalog so both `call` expressions and the tools
-    // a specialist needs are available to the evaluator.
+    // Resolve exactly the tools the workflow references — its `call` tools plus
+    // the tools its specialists need — so an unrelated broken or ambiguous tool
+    // elsewhere in the catalog can't block a workflow that doesn't use it.
+    let refs = spawningpool::workflow::referenced(&workflow, &registry);
     let tools_dir = spawningpool::store::tools_dir();
-    let tool_names = spawningpool::tools::list(&tools_dir)?;
+    let tool_names: Vec<String> = refs.tools.iter().cloned().collect();
     let tools = spawningpool::tools::resolve_all(&tools_dir, &tool_names)?;
 
     spawningpool::workflow::check(&workflow, &registry, &tools)
         .map_err(|e| format!("workflow '{name}' failed type-checking: {e}"))?;
 
     let keys = provider_keys(&registry);
+    warn_unset_keys(&refs.specialists, &registry, &keys);
     let client = Client::new();
     let result = spawningpool::workflow::eval(&workflow, &registry, &tools, &client, &keys)
         .await
@@ -584,6 +587,32 @@ fn provider_keys(registry: &Registry) -> HashMap<String, String> {
     keys
 }
 
+/// Warn on stderr about each provider a workflow's specialists need but whose API
+/// key isn't set, so a missing key surfaces before the run rather than as an auth
+/// failure mid-workflow. Mirrors the bare-`spawningpool` key warning.
+fn warn_unset_keys(
+    specialists: &std::collections::BTreeSet<String>,
+    registry: &Registry,
+    keys: &HashMap<String, String>,
+) {
+    let mut warned = std::collections::BTreeSet::new();
+    for spec_name in specialists {
+        if let Some(spec) = registry.specialists.get(spec_name) {
+            if let Some(provider) = registry.providers.get(&spec.provider) {
+                if provider.api_key_env.is_some()
+                    && !keys.contains_key(&provider.name)
+                    && warned.insert(provider.name.clone())
+                {
+                    eprintln!(
+                        "warning: API key for provider '{}' is unset; specialists using it will fail",
+                        provider.name
+                    );
+                }
+            }
+        }
+    }
+}
+
 /// Run a single tool script directly, with `KEY=VALUE` params, and print the
 /// structured JSON the tool writes to `$SP_OUTPUT_PATH`.
 fn run_tool(name: &str, args: &[String]) -> Result<(), String> {
@@ -595,6 +624,23 @@ fn run_tool(name: &str, args: &[String]) -> Result<(), String> {
             .split_once('=')
             .ok_or_else(|| format!("invalid --arg '{arg}': expected KEY=VALUE"))?;
         vars.insert(key.to_string(), value.to_string());
+    }
+
+    // Validate args against the tool's declared params (all are required), so a
+    // typo'd or missing param fails here instead of silently passing an empty or
+    // absent env var to the script — matching the checks a workflow `call` gets.
+    for key in vars.keys() {
+        if !tool.params.iter().any(|p| &p.name == key) {
+            return Err(format!("tool '{name}' has no parameter '{key}'"));
+        }
+    }
+    for param in &tool.params {
+        if !vars.contains_key(&param.name) {
+            return Err(format!(
+                "tool '{name}' is missing required parameter '{}'",
+                param.name
+            ));
+        }
     }
 
     let run = spawningpool::run_script(&tool.script, &vars)

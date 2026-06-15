@@ -113,22 +113,8 @@ fn find(dir: &Path, name: &str) -> Result<PathBuf, String> {
 /// A missing folder yields none. Directories are ignored; symlinks to files are
 /// kept (their target is followed when the tool is resolved or run).
 fn entries_with_stem(dir: &Path, name: &str) -> Result<Vec<PathBuf>, String> {
-    let read = match std::fs::read_dir(dir) {
-        Ok(read) => read,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
-        Err(e) => return Err(format!("can't read tools dir {}: {e}", dir.display())),
-    };
-    let mut matches = Vec::new();
-    for entry in read.flatten() {
-        let path = entry.path();
-        if path.is_dir() {
-            continue;
-        }
-        if path.file_stem().and_then(|s| s.to_str()) == Some(name) {
-            matches.push(path);
-        }
-    }
-    Ok(matches)
+    crate::store::entries_with_stem(dir, name)
+        .map_err(|e| format!("can't read tools dir {}: {e}", dir.display()))
 }
 
 #[cfg(test)]

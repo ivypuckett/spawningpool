@@ -45,6 +45,29 @@ pub fn workflows_dir() -> PathBuf {
     }
 }
 
+/// Every non-directory entry in `dir` whose file name, minus a single extension,
+/// equals `name`. A missing directory yields an empty list. Shared by the tool
+/// and workflow folders, which both name their files by stem (so `deploy.spool`
+/// and a file named `deploy` both match `deploy`).
+pub fn entries_with_stem(dir: &Path, name: &str) -> std::io::Result<Vec<PathBuf>> {
+    let read = match std::fs::read_dir(dir) {
+        Ok(read) => read,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(e) => return Err(e),
+    };
+    let mut matches = Vec::new();
+    for entry in read.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            continue;
+        }
+        if path.file_stem().and_then(|s| s.to_str()) == Some(name) {
+            matches.push(path);
+        }
+    }
+    Ok(matches)
+}
+
 /// Load the registry from its resolved path. A missing file is an empty registry.
 pub fn load() -> Result<Registry, String> {
     load_from(&registry_path())
