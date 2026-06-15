@@ -277,6 +277,7 @@ mod tests {
             script,
             description: String::new(),
             params: vec![],
+            output: None,
         }
     }
 
@@ -296,7 +297,11 @@ mod tests {
             name: "ping".to_string(),
             script: PathBuf::from("ping.sh"),
             description: "Ping a host".to_string(),
-            params: vec!["host".to_string()],
+            params: vec![crate::types::Param {
+                name: "host".to_string(),
+                ty: crate::types::Type::String,
+            }],
+            output: None,
         }];
 
         let ctx = build_context(&specialist, "ping example.com", &tools);

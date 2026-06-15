@@ -4,6 +4,28 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+Foundations for the [Workflow DSL](docs/workflow-dsl.md): the typed tool headers
+and structured-tool-output plumbing the DSL builds on. The orchestration language
+itself (parser, type-checker, evaluator) is not included yet.
+
+### Added
+
+- **A type system for tool headers** (`spawningpool::types`). The notation
+  `string`/`number`/`bool`/`[T]`/`{ "k": T, ... }` parses into a `Type` and
+  lowers to JSON Schema, reusing the existing tool-call validator and schema
+  builder rather than duplicating them.
+- **Typed `# params:` and a new `# output:` header directive.** A param may carry
+  an optional `:type` suffix (a bare param still means `string`, so existing
+  headers are unchanged); `# output:` declares the type of a tool's structured
+  result. `ToolDef`/`ScriptSummary` carry these, and `ToolDef::to_tool` lowers
+  each param to its declared type.
+- **Structured tool output via `$SP_OUTPUT_PATH`.** Before running a tool the
+  runner sets `SP_OUTPUT_PATH` to a fresh temp file; a tool's JSON written there
+  is read back as `ScriptRun::structured_output`. stdout/stderr remain ordinary
+  logs and are not parsed.
+
 ## [0.2.0] - 2026-06-12
 
 First public release on crates.io, published as two crates: the `spawningpool`
