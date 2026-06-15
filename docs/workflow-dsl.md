@@ -106,29 +106,36 @@ This means no new return plumbing is needed; the DSL consumes what
 
 ## 5. Workflow structure
 
-A workflow has three sections in order: **input**, **process**, **output**.
-Statements within and between sections are separated by a **double newline**.
+There are **no `input`/`process`/`output` sections** — input/process/output is
+the conceptual shape, not literal syntax. A workflow is just a flat **series of
+statements** separated by a **double newline**, and most statements are
+assignments.
 
 ```
-input
-  CITY: string
-  RETRIES: number
+CITY: string
 
-process
-  weather = call get_weather { CITY: CITY, RETRIES: RETRIES }
+RETRIES: number
 
-  summary = ask reporter ("Summarize: " + weather.summary)
+weather = call get_weather { CITY: CITY, RETRIES: RETRIES }
 
-output
-  { "city": CITY, "ok": weather.reachable, "report": summary.output }
+summary = ask reporter ("Summarize: " + weather.summary)
+
+result = { "city": CITY, "ok": weather.reachable, "report": summary.output }
 ```
 
-- **input** declares typed inputs as `ENVKEY: jsonType`. Like tool params, inputs
-  arrive from the environment.
-- **process** is a list of statements (assignments, calls, control flow).
-- **output** is a single expression. Its value is written to the workflow's own
-  `$SP_OUTPUT_PATH` — so a workflow is itself composable as a tool, with declared
-  inputs and a typed output.
+- **Input** is declared with a typed statement `ENVKEY: jsonType` (e.g. `CITY:
+  string`). Like tool params, inputs arrive from the environment.
+- **Process** is the run of assignment/call/control-flow statements that follow.
+- **Output** — the value the workflow produces, written to its own
+  `$SP_OUTPUT_PATH` so a workflow is itself composable as a tool. How that value
+  is designated (final statement vs. a dedicated form) is an open decision; see
+  §8.
+
+The common idiom is to **assign** a control-flow expression rather than write it
+bare: `var = if (...) ..., (_) ...` and `var = foreach [item: arr] (...)`. The
+raw `if`/`foreach` syntax is the expression itself (§6.4, §6.5); the `var = …`
+form is just that expression on the right of an assignment, which is how it's
+normally used since both yield values.
 
 ## 6. Statements and expressions
 
@@ -164,6 +171,7 @@ if (expr) result, (expr) result, ..., (_) result
 
 The first branch whose condition is truthy yields its result. **A selection must
 always end with the `(_)` default branch.** No per-branch variable binding in v1.
+This is an expression; the common form is `var = if (...) ..., (_) ...` (§5).
 
 ### 6.5 Iteration (for)
 
@@ -175,7 +183,8 @@ Binds `item` to each element of `array` and evaluates the single sub-expression
 per element; the iteration's value is the array of results (map semantics —
 "monadic uses map"). The body accepts **one** sub-expression; if that
 sub-expression is itself a `for`, it likewise accepts one sub-expression, and so
-on for deeper nesting.
+on for deeper nesting. This is an expression; the common form is `var = foreach
+[item: arr] (...)` (§5).
 
 ### 6.6 Tool call
 
@@ -230,11 +239,13 @@ call:
 
 These are intentionally not pinned yet; each has a recommended default:
 
-1. **Workflow invocation / CLI surface.** How a workflow is defined and run
-   (e.g. `spawningpool run --workflow <file>`), and whether workflows live beside
-   tools so they nest uniformly. *Recommended:* treat a workflow as a tool-like
-   artifact with typed inputs (env) and `$SP_OUTPUT_PATH` output, runnable via a
-   new `run --workflow` flag.
+1. **Workflow invocation / CLI surface, and how the output value is designated.**
+   How a workflow is defined and run (e.g. `spawningpool run --workflow <file>`),
+   whether workflows live beside tools so they nest uniformly, and how a workflow
+   names the value written to `$SP_OUTPUT_PATH` — the value of the final statement,
+   or a dedicated form. *Recommended:* treat a workflow as a tool-like artifact
+   with typed inputs (env) and `$SP_OUTPUT_PATH` output, runnable via a new
+   `run --workflow` flag, with the last statement's value as the output.
 2. **Exit-code semantics for tools in a workflow.** With "errors are data," a
    non-zero exit is informational. *Recommended:* the runner records the exit
    code but does not abort; if the tool wrote no output file, that is a runtime
