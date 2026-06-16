@@ -16,7 +16,7 @@ pub enum BinOp {
     And,
 }
 
-/// Access key used in a member-access chain (workflow-dsl.md §6.9).
+/// Access key used in a member-access chain (workflow-dsl.md §6.7).
 #[derive(Debug, Clone, PartialEq)]
 pub enum AccessKey {
     /// `.ident` — literal key (bare identifier, not a variable).
@@ -66,21 +66,23 @@ pub enum Expr {
         array: Box<Expr>,
         body: Box<Expr>,
     },
-    /// Tool call `call tool_name { KEY: expr, ... }` (workflow-dsl.md §6.6).
-    Call {
+    /// Tool run `run tool <name> { KEY: expr, ... }` (workflow-dsl.md §6.6).
+    RunTool {
         tool: String,
         args: Vec<(String, Expr)>,
     },
-    /// Workflow call `run workflow_name { KEY: expr, ... }` (workflow-dsl.md
-    /// §6.8). Supplies the callee's declared `# inputs:` by name and yields the
-    /// callee's result value; the `run` verb (vs `call`) selects the `workflows/`
-    /// namespace, so a tool and a workflow may share a name without ambiguity.
-    Run {
+    /// Workflow run `run workflow <name> { KEY: expr, ... }` (workflow-dsl.md
+    /// §6.6). Supplies the callee's declared `# inputs:` by name and yields the
+    /// callee's result value. The `run` verb's `<kind>` (vs a bare name) selects
+    /// the namespace, so a tool and a workflow may share a name without
+    /// ambiguity.
+    RunWorkflow {
         workflow: String,
         args: Vec<(String, Expr)>,
     },
-    /// Specialist call `ask specialist prompt_expr` (workflow-dsl.md §6.7).
-    Ask {
+    /// Specialist run `run specialist <name> <prompt-expr>` (workflow-dsl.md
+    /// §6.6).
+    RunSpecialist {
         specialist: String,
         prompt: Box<Expr>,
     },

@@ -79,7 +79,7 @@ printf '{"host":"%s","reachable":true,"ms":12}' "$HOST" > "$SP_OUTPUT_PATH"
 
 ## 4. Specialist calls and the unified return type
 
-`ask <specialist> <prompt-expr>` runs a specialist. Both constrained and
+`run specialist <name> <prompt-expr>` runs a specialist. Both constrained and
 unconstrained specialists return the **same** shape — the existing
 `run --output json` envelope (`cli/src/main.rs`). As a DSL type:
 
@@ -99,7 +99,7 @@ unconstrained specialists return the **same** shape — the existing
 
 - An **unconstrained** specialist's answer is in `.output`.
 - A **constrained** specialist's forced call is in `.toolCalls` — e.g. read
-  `ask classify "..."` as `result.toolCalls.0.output`.
+  `run specialist classify "..."` as `result.toolCalls.0.output`.
 
 This means no new return plumbing is needed; the DSL consumes what
 `run_specialist` already produces.
@@ -116,9 +116,9 @@ environment variables; see §3.)
 ```
 city = "Portland"
 
-weather = call get_weather { CITY: city }
+weather = run tool get_weather { CITY: city }
 
-summary = ask reporter ("Summarize: " + weather.summary)
+summary = run specialist reporter ("Summarize: " + weather.summary)
 
 result = { "city": city, "ok": weather.reachable, "report": summary.output }
 ```
@@ -143,7 +143,7 @@ typed-parameter notation as a tool's `# params:` (§3) — `NAME` (a `string`) o
 ```
 # inputs: CITY:string, COUNT:number
 
-weather = call get_weather { CITY: CITY }
+weather = run tool get_weather { CITY: CITY }
 
 result = { "city": CITY, "checks": COUNT }
 ```
@@ -151,7 +151,7 @@ result = { "city": CITY, "checks": COUNT }
 Each declared input is in scope as a variable of its declared type from the
 first statement on, so the type-checker (§2) treats `CITY` as a `string` exactly
 as if it had been assigned one. Values are supplied at run time — see
-`run --workflow` in [the CLI reference](cli.md#run-workflow). Lines whose first
+`run workflow` in [the CLI reference](cli.md#run-workflow). Lines whose first
 non-space character is `#` are comments: the first `# inputs:` line is the
 declaration (later ones are ignored), and every other `#` line is skipped.
 
@@ -213,49 +213,50 @@ sub-expression is itself a `for`, it likewise accepts one sub-expression, and so
 on for deeper nesting. This is an expression; the common form is `var = foreach
 [item: arr] (...)` (§5).
 
-### 6.6 Tool call
+### 6.6 Invocation: `run <kind>`
+
+Tools, specialists, and workflows are all invoked with one verb, `run`, followed
+by the **kind** and the name — mirroring the CLI's `run` subcommands:
 
 ```
-call <toolname> <map-expr>
+run tool <name> <map-expr>
+run workflow <name> <map-expr>
+run specialist <name> <prompt-expr>
 ```
 
-The single argument is a map supplying the tool's declared params by name
-("monadic uses map"). The call's value is the tool's declared `# output:` type,
-read from the tool's `$SP_OUTPUT_PATH` after it runs.
+The verb and the kind keyword accept the same aliases as the CLI:
 
-### 6.7 Specialist call
+| canonical | aliases |
+| --- | --- |
+| `run` | `spawn` |
+| `tool` | — |
+| `workflow` | `overseer` |
+| `specialist` | `lenny`, `ling` |
 
-```
-ask <specialist> <prompt-expr>
-```
+**`run tool`** — the map supplies the tool's declared params by name ("monadic
+uses map"). Its value is the tool's declared `# output:` type, read from the
+tool's `$SP_OUTPUT_PATH` after it runs.
 
-`prompt-expr` evaluates to the user prompt (a string). The call's value is the
-unified envelope of §4.
+**`run specialist`** — `prompt-expr` evaluates to the user prompt (a string). Its
+value is the unified envelope of §4.
 
-### 6.8 Workflow call
+**`run workflow`** — invokes another workflow, supplying its declared `# inputs:`
+(§5.1) by name. Its value is the callee's **result type**, inferred recursively
+from its last statement (there is no `# output:` header on a workflow; the body
+is the single source of truth). Arguments flow as typed values, not stringified
+env vars: a `number` input arrives as a number, an object as an object.
 
-```
-run <workflowname> <map-expr>
-```
+The **kind selects the namespace.** Tools live in `tools/` and workflows in
+`workflows/`, keyed by file name, so a tool and a workflow can share a name;
+`run tool deploy` is always the tool and `run workflow deploy` always the
+workflow, so a collision is unambiguous rather than resolved by a hidden
+precedence rule.
 
-Invokes another workflow, supplying its declared `# inputs:` (§5.1) by name —
-the same map form a tool `call` uses. The call's value is the callee's **result
-type**, inferred recursively from its last statement (there is no `# output:`
-header on a workflow; the body is the single source of truth). Arguments flow as
-typed values, not stringified env vars: a `number` input arrives as a number, an
-object as an object.
+Cycles are rejected: if a `run workflow` re-enters a workflow already on the call
+stack (`a` runs `b` runs `a`), the type-checker reports a cycle rather than
+looping forever.
 
-`run` is a **separate verb from `call` on purpose**. Tools live in `tools/` and
-workflows in `workflows/`, keyed by file name, so a tool and a workflow can share
-a name. The verb selects the namespace — `call deploy` is always the tool,
-`run deploy` always the workflow — so a collision is unambiguous rather than
-resolved by a hidden precedence rule.
-
-Cycles are rejected: if a `run` re-enters a workflow already on the call stack
-(`a` runs `b` runs `a`), the type-checker reports a cycle rather than looping
-forever.
-
-### 6.9 Access
+### 6.7 Access
 
 Access into arrays and objects uses `.`:
 
@@ -292,9 +293,9 @@ Pushed past v1; each has a likely direction to revisit when picked up:
 1. **Error logging / exit-code semantics for tools in a workflow.** "Errors are
    data" (§7) is the principle; how a tool's exit code and absent/garbled output
    file are recorded and surfaced is deferred.
-2. **Computed access into objects** (§6.9). A computed key into an object can hit
+2. **Computed access into objects** (§6.7). A computed key into an object can hit
    keys of differing declared types, so the result type isn't statically known.
    Deferred until there's a type story for it (e.g. an `any`/union type).
 
 *Previously deferred, now shipped:* workflow invocation and inputs (§5.1), output
-via `$SP_OUTPUT_PATH`, and in-language nesting through the `run` verb (§6.8).
+via `$SP_OUTPUT_PATH`, and in-language nesting through the `run` verb (§6.6).

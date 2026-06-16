@@ -40,7 +40,7 @@ type Env = HashMap<String, serde_json::Value>;
 
 /// Evaluate a workflow, executing its statements in order.
 ///
-/// `tools` must contain every tool referenced by `call` expressions in the
+/// `tools` must contain every tool referenced by `run tool` expressions in the
 /// workflow, pre-resolved with script paths. `keys` maps a provider name to its
 /// API key; each specialist call is authenticated with its own provider's key
 /// (a provider absent from the map runs without one), and its constrained-decoding
@@ -176,7 +176,7 @@ fn eval_expr<'ctx>(
                 Ok(serde_json::Value::Array(results))
             }
 
-            Expr::Call { tool, args } => {
+            Expr::RunTool { tool, args } => {
                 let tool_def = ctx
                     .tools
                     .iter()
@@ -208,13 +208,15 @@ fn eval_expr<'ctx>(
                 })
             }
 
-            Expr::Ask {
+            Expr::RunSpecialist {
                 specialist: spec_name,
                 prompt,
             } => {
                 let prompt_val = eval_expr(prompt, env, ctx, visited.clone()).await?;
                 let prompt_str = prompt_val.as_str().ok_or_else(|| {
-                    WorkflowError(format!("ask prompt must be a string, got {prompt_val}"))
+                    WorkflowError(format!(
+                        "specialist prompt must be a string, got {prompt_val}"
+                    ))
                 })?;
 
                 let specialist = ctx
@@ -268,7 +270,7 @@ fn eval_expr<'ctx>(
                 Ok(collected.into_envelope(spec_name, &specialist.model))
             }
 
-            Expr::Run {
+            Expr::RunWorkflow {
                 workflow: wf_name,
                 args,
             } => {
@@ -695,7 +697,7 @@ mod tests {
             )])),
         };
 
-        let wf = parse(r#"result = call greet { NAME: "world" }"#).unwrap();
+        let wf = parse(r#"result = run tool greet { NAME: "world" }"#).unwrap();
         let registry = Registry::default();
         let client = crate::ai::Client::new();
         let keys = HashMap::new();
@@ -741,7 +743,7 @@ mod tests {
             output: Some(crate::types::Type::String),
         };
 
-        let wf = parse("result = call silent {}").unwrap();
+        let wf = parse("result = run tool silent {}").unwrap();
         let registry = Registry::default();
         let client = crate::ai::Client::new();
         let keys = HashMap::new();
@@ -803,8 +805,8 @@ mod tests {
         // The outer workflow runs `inner`, which calls a tool with the input it
         // was handed, and reads a field off the nested result.
         let (tool, script_path) = echo_tool();
-        let inner = parse("# inputs: WHO:string\n\nout = call echo { NAME: WHO }").unwrap();
-        let outer = parse(r#"r = run inner { WHO: "world" }"#).unwrap();
+        let inner = parse("# inputs: WHO:string\n\nout = run tool echo { NAME: WHO }").unwrap();
+        let outer = parse(r#"r = run workflow inner { WHO: "world" }"#).unwrap();
 
         let mut workflows = HashMap::new();
         workflows.insert("inner".to_string(), inner);
@@ -833,8 +835,8 @@ mod tests {
     #[tokio::test]
     async fn run_detects_a_cycle() {
         // `a` runs `b`, `b` runs `a` — evaluation must stop with a cycle error.
-        let a = parse("x = run b {}").unwrap();
-        let b = parse("y = run a {}").unwrap();
+        let a = parse("x = run workflow b {}").unwrap();
+        let b = parse("y = run workflow a {}").unwrap();
         let mut workflows = HashMap::new();
         workflows.insert("a".to_string(), a.clone());
         workflows.insert("b".to_string(), b);

@@ -15,7 +15,7 @@
 //! let source = r#"
 //! city = "Portland"
 //!
-//! weather = call get_weather { CITY: city }
+//! weather = run tool get_weather { CITY: city }
 //!
 //! result = { "city": city, "ok": weather.reachable }
 //! "#;
@@ -159,12 +159,12 @@ fn coerce_input(raw: &str, ty: &Type) -> Result<serde_json::Value, String> {
 /// API keys.
 #[derive(Debug, Default, PartialEq, Eq)]
 pub struct Referenced {
-    /// Tool names to resolve: every `call` tool, plus the tools each invoked
-    /// specialist needs (looked up in the registry).
+    /// Tool names to resolve: every `run tool` target, plus the tools each
+    /// invoked specialist needs (looked up in the registry).
     pub tools: BTreeSet<String>,
-    /// Specialist names invoked via `ask`.
+    /// Specialist names invoked via `run specialist`.
     pub specialists: BTreeSet<String>,
-    /// Workflow names invoked via `run` (workflow-dsl.md §6.8). Only the
+    /// Workflow names invoked via `run workflow` (workflow-dsl.md §6.6). Only the
     /// directly-referenced workflows; resolving the *transitive* closure (a
     /// `run` target's own `run` targets) is the caller's job, since this walk
     /// can't see other workflows' sources.
@@ -212,19 +212,19 @@ fn collect(expr: &Expr, registry: &Registry, refs: &mut Referenced) {
             collect(array, registry, refs);
             collect(body, registry, refs);
         }
-        Expr::Call { tool, args } => {
+        Expr::RunTool { tool, args } => {
             refs.tools.insert(tool.clone());
             for (_, e) in args {
                 collect(e, registry, refs);
             }
         }
-        Expr::Run { workflow, args } => {
+        Expr::RunWorkflow { workflow, args } => {
             refs.workflows.insert(workflow.clone());
             for (_, e) in args {
                 collect(e, registry, refs);
             }
         }
-        Expr::Ask { specialist, prompt } => {
+        Expr::RunSpecialist { specialist, prompt } => {
             refs.specialists.insert(specialist.clone());
             if let Some(spec) = registry.specialists.get(specialist) {
                 for tool in spec.tool_names() {
@@ -322,7 +322,7 @@ mod tests {
                 stream: false,
             },
         );
-        let wf = parse("a = call fetch {}\n\nb = ask writer \"hi\"").unwrap();
+        let wf = parse("a = run tool fetch {}\n\nb = run specialist writer \"hi\"").unwrap();
         let refs = referenced(&wf, &registry);
         // Direct `call` tool plus the specialist's own tool, and the specialist.
         assert_eq!(
@@ -340,7 +340,8 @@ mod tests {
     #[test]
     fn referenced_collects_run_workflow_names() {
         let registry = Registry::default();
-        let wf = parse("a = run deploy { ENV: \"prod\" }\n\nb = run notify {}").unwrap();
+        let wf = parse("a = run workflow deploy { ENV: \"prod\" }\n\nb = run workflow notify {}")
+            .unwrap();
         let refs = referenced(&wf, &registry);
         assert_eq!(
             refs.workflows,
