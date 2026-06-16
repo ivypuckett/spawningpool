@@ -44,6 +44,7 @@
 
 pub mod ast;
 pub mod check;
+mod collector;
 pub mod eval;
 pub mod parse;
 
