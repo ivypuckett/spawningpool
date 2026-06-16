@@ -226,7 +226,7 @@ Runs a specialist, a workflow, or a tool. Alias: `spawningpool spawn`.
 
 ```sh
 spawningpool run specialist <name> --prompt '<prompt>' [--output <json|plaintext>]
-spawningpool run workflow <name>
+spawningpool run workflow <name> [--arg KEY=VALUE]...
 spawningpool run tool <name> [--arg KEY=VALUE]...
 ```
 
@@ -268,11 +268,23 @@ An agentic specialist that never stops calling tools fails after 16 turns.
 Executes a workflow from the `workflows/` folder beside the registry, by name
 (the file name with any extension stripped, like tools). The workflow is parsed,
 type-checked against the tool catalog and registry, then evaluated; its result
-value is printed as JSON on stdout. See [the Workflow DSL](workflow-dsl.md).
+value (the last statement's) is printed as JSON on stdout. See
+[the Workflow DSL](workflow-dsl.md).
 
 ```sh
-spawningpool run workflow triage
+spawningpool run workflow triage --arg CITY=Portland --arg COUNT=3
 ```
+
+Each `--arg KEY=VALUE` supplies one of the workflow's declared `# inputs:`
+([§5.1](workflow-dsl.md#51-inputs)), repeatable. The value is coerced to the
+input's declared type: a `string` takes the text verbatim, `number`/`bool` parse
+the scalar, and an array/object input parses its value as JSON. Every declared
+input must be supplied, and an `--arg` that names no declared input is rejected —
+both fail before the workflow runs.
+
+If the run is invoked with `$SP_OUTPUT_PATH` set, the result JSON is also written
+there (in addition to stdout), matching the contract a tool obeys — so a workflow
+is composable as a tool by an outer runner.
 
 Each specialist invoked by the workflow's `ask` expressions authenticates with
 its own provider's key, sourced from that provider's `--api-key-env`; a workflow

@@ -128,9 +128,32 @@ Here `city` has type `string` (inferred from the literal), `weather` has the
 specialist envelope type (§4) — so the access in later statements is
 type-checked against those.
 
-The value the workflow produces is written to its own `$SP_OUTPUT_PATH`, so a
-workflow is itself composable as a tool. How that value is designated is
-deferred; see §8.
+The value the workflow produces — the last statement's value — is printed as
+JSON, and, when the workflow is invoked with `$SP_OUTPUT_PATH` set, also written
+there. That is the same GHA-style contract a tool obeys (§3), so a workflow run
+this way is composable as a tool by any outer runner. (Resolving a `call` to a
+workflow the way it resolves to a tool is still deferred; see §8.)
+
+### 5.1 Inputs
+
+A workflow declares its external inputs in an `# inputs:` header, using the same
+typed-parameter notation as a tool's `# params:` (§3) — `NAME` (a `string`) or
+`NAME:type`:
+
+```
+# inputs: CITY:string, COUNT:number
+
+weather = call get_weather { CITY: CITY }
+
+result = { "city": CITY, "checks": COUNT }
+```
+
+Each declared input is in scope as a variable of its declared type from the
+first statement on, so the type-checker (§2) treats `CITY` as a `string` exactly
+as if it had been assigned one. Values are supplied at run time — see
+`run --workflow` in [the CLI reference](cli.md#run-workflow). Lines whose first
+non-space character is `#` are comments: the first `# inputs:` line is the
+declaration (later ones are ignored), and every other `#` line is skipped.
 
 The common idiom is to **assign** a control-flow expression rather than write it
 bare: `var = if (...) ..., (_) ...` and `var = foreach [item: arr] (...)`. The
@@ -243,12 +266,14 @@ call:
 
 Pushed past v1; each has a likely direction to revisit when picked up:
 
-1. **Workflow invocation / CLI surface, how external inputs are supplied, and how
-   the output value is designated.** How a workflow is defined and run, whether
-   workflows live beside tools so they nest uniformly, how external inputs reach
-   the workflow, and how a workflow names the value written to `$SP_OUTPUT_PATH`.
-   *Likely:* a tool-like artifact runnable via a new `run --workflow` flag, with
-   the last statement's value as the output.
+1. **Uniform `call`-nesting of workflows.** Workflows now run via `run --workflow`
+   (a source file in `workflows/`, named like a tool), take external inputs from
+   an `# inputs:` header (§5.1) supplied as `--arg KEY=VALUE`, and write their
+   last statement's value to `$SP_OUTPUT_PATH` — the same I/O contract a tool
+   obeys (§3). What's still deferred is letting a `call` resolve to a workflow
+   the way it resolves to a tool, so workflows nest in-language. *Likely:* the
+   `call` resolver and the `referenced` walker learn to find a workflow by name
+   and recurse (with cycle detection), reusing the input/output contract above.
 2. **Error logging / exit-code semantics for tools in a workflow.** "Errors are
    data" (§7) is the principle; how a tool's exit code and absent/garbled output
    file are recorded and surfaced is deferred.

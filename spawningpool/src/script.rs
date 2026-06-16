@@ -94,8 +94,9 @@ fn parse_header(contents: &str) -> Result<ScriptSummary, String> {
 /// Parse a `# params:` value into typed parameters. Each token is `NAME` (type
 /// `string`) or `NAME:type`; the type notation may itself contain commas and
 /// spaces (inside `[]`/`{}`/`""`), so tokens are split only on top-level commas
-/// and whitespace.
-fn parse_params(rest: &str) -> Result<Vec<Param>, String> {
+/// and whitespace. Shared with the workflow parser, whose `# inputs:` header
+/// uses the same notation (workflow-dsl.md §5.1).
+pub(crate) fn parse_params(rest: &str) -> Result<Vec<Param>, String> {
     let mut params = Vec::new();
     for token in split_params(rest) {
         let param = match token.split_once(':') {

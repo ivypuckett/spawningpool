@@ -76,7 +76,13 @@ enum RunTarget {
         output: Option<OutputFormat>,
     },
     /// Execute a workflow from the `workflows/` folder, by name.
-    Workflow { name: String },
+    Workflow {
+        name: String,
+        /// A workflow input, as `KEY=VALUE`, matching a `# inputs:` entry.
+        /// Repeatable.
+        #[arg(long = "arg", value_name = "KEY=VALUE")]
+        args: Vec<String>,
+    },
     /// Run a single tool script directly, by name.
     Tool {
         name: String,
@@ -219,7 +225,7 @@ async fn run(cli: Cli) -> Result<(), String> {
                 prompt,
                 output,
             } => run_specialist(&name, &prompt, output).await,
-            RunTarget::Workflow { name } => run_workflow(&name).await,
+            RunTarget::Workflow { name, args } => run_workflow(&name, &args).await,
             RunTarget::Tool { name, args } => run_tool(&name, &args),
         },
         Some(Command::List { kind }) => list(kind).await,
@@ -546,13 +552,21 @@ async fn run_specialist(
 }
 
 /// Execute a workflow from the `workflows/` folder by name: parse it, resolve
-/// the tool catalog, type-check, then evaluate. Prints the workflow's result
-/// value as JSON.
-async fn run_workflow(name: &str) -> Result<(), String> {
+/// the tool catalog, type-check, then evaluate. `args` are `KEY=VALUE` values
+/// for the workflow's declared `# inputs:`. Prints the workflow's result value
+/// as JSON, and — like a tool — also writes it to `$SP_OUTPUT_PATH` when that is
+/// set, so a workflow obeys the same I/O contract and is composable as a tool.
+async fn run_workflow(name: &str, args: &[String]) -> Result<(), String> {
     let registry = spawningpool::store::load()?;
     let source = spawningpool::workflow::source(&spawningpool::store::workflows_dir(), name)?;
     let workflow = spawningpool::workflow::parse(&source)
         .map_err(|e| format!("workflow '{name}' is invalid: {e}"))?;
+
+    // Coerce the supplied --arg values to the workflow's declared input types
+    // before anything runs, so a missing or mistyped input fails up front.
+    let provided = parse_kv_args(args)?;
+    let inputs = spawningpool::workflow::resolve_inputs(&workflow.inputs, &provided)
+        .map_err(|e| format!("workflow '{name}': {e}"))?;
 
     // Resolve exactly the tools the workflow references — its `call` tools plus
     // the tools its specialists need — so an unrelated broken or ambiguous tool
@@ -568,11 +582,31 @@ async fn run_workflow(name: &str) -> Result<(), String> {
     let keys = provider_keys(&registry);
     warn_unset_keys(&refs.specialists, &registry, &keys);
     let client = Client::new();
-    let result = spawningpool::workflow::eval(&workflow, &registry, &tools, &client, &keys)
-        .await
-        .map_err(|e| format!("workflow '{name}' failed: {e}"))?;
+    let result =
+        spawningpool::workflow::eval(&workflow, &registry, &tools, &client, &keys, &inputs)
+            .await
+            .map_err(|e| format!("workflow '{name}' failed: {e}"))?;
+
+    // GHA-style output: when invoked with $SP_OUTPUT_PATH set (e.g. as another
+    // runner's tool), write the result there so it composes like a tool.
+    if let Some(path) = std::env::var_os("SP_OUTPUT_PATH") {
+        std::fs::write(&path, result.to_string())
+            .map_err(|e| format!("workflow '{name}': can't write $SP_OUTPUT_PATH: {e}"))?;
+    }
     println!("{result}");
     Ok(())
+}
+
+/// Parse repeated `KEY=VALUE` flags into a map, erroring on a token without `=`.
+fn parse_kv_args(args: &[String]) -> Result<HashMap<String, String>, String> {
+    let mut map = HashMap::new();
+    for arg in args {
+        let (key, value) = arg
+            .split_once('=')
+            .ok_or_else(|| format!("invalid --arg '{arg}': expected KEY=VALUE"))?;
+        map.insert(key.to_string(), value.to_string());
+    }
+    Ok(map)
 }
 
 /// Map each provider to its API key, read from the provider's configured

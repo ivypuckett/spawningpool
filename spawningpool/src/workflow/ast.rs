@@ -1,5 +1,7 @@
 //! AST types for the workflow DSL (workflow-dsl.md §5–6).
 
+use crate::types::Param;
+
 /// Binary operator. All operators have the same precedence and associate
 /// left-to-right (workflow-dsl.md §6.3).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -83,9 +85,13 @@ pub struct Statement {
     pub expr: Expr,
 }
 
-/// A workflow: a flat sequence of assignment statements separated by blank
-/// lines (workflow-dsl.md §5).
+/// A workflow: declared external inputs plus a flat sequence of assignment
+/// statements separated by blank lines (workflow-dsl.md §5).
 #[derive(Debug, Clone, PartialEq)]
 pub struct Workflow {
+    /// External inputs declared in the `# inputs:` header, supplied at run time
+    /// (workflow-dsl.md §5.1). Each is in scope as a variable of its declared
+    /// type from the first statement on. Empty when no header is present.
+    pub inputs: Vec<Param>,
     pub statements: Vec<Statement>,
 }
