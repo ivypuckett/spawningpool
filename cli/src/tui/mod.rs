@@ -31,10 +31,27 @@ type Tui = Terminal<CrosstermBackend<io::Stdout>>;
 /// terminal on the way out (even if the loop errors).
 pub async fn launch() -> Result<(), String> {
     let mut app = App::load()?;
+    // Restore the terminal on panic too — the `teardown()` below is skipped when
+    // the loop unwinds, so without this a panic leaves the shell in raw mode and
+    // its backtrace scrambled across the alternate screen.
+    install_panic_hook();
     let mut terminal = setup().map_err(|e| format!("failed to start TUI: {e}"))?;
     let result = run_loop(&mut terminal, &mut app).await;
     let _ = teardown();
     result
+}
+
+/// Wrap the panic hook so it restores the terminal *before* the default handler
+/// prints. The default hook prints at the panic site, ahead of any unwinding, so
+/// a `Drop` guard would run too late to keep the message readable — only the hook
+/// runs early enough. The CLI exits right after [`launch`] returns, so the
+/// process-global hook is installed once and not restored.
+fn install_panic_hook() {
+    let original = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        let _ = teardown();
+        original(info);
+    }));
 }
 
 fn setup() -> io::Result<Tui> {
