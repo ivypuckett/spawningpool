@@ -329,8 +329,8 @@ fn eval_binop(
                 Ok(serde_json::Value::String(ls.clone() + rs))
             }
             (serde_json::Value::Number(_), serde_json::Value::Number(_)) => {
-                let ln = l.as_f64().unwrap();
-                let rn = r.as_f64().unwrap();
+                let ln = num_val(&l, "+")?;
+                let rn = num_val(&r, "+")?;
                 Ok(serde_json::json!(ln + rn))
             }
             _ => Err(WorkflowError(format!(
