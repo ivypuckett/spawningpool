@@ -3,6 +3,9 @@
 
 use super::*;
 use crate::ai::catalog::lmstudio_model;
+use crate::ai::message::{ContentBlock, Message, Role, StopReason};
+use crate::ai::model::{Context, Model};
+use crate::ai::provider::{CompleteOptions, Error, Reasoning, StreamEvent};
 
 fn model() -> Model {
     lmstudio_model("local-model")
