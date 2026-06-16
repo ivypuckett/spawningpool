@@ -63,7 +63,7 @@ struct Ctx<'a> {
 /// on success.
 ///
 /// `tools` is the set of tool definitions accessible from this workflow —
-/// every `call` expression must name a tool present here, and all called tools
+/// every `run tool` expression must name a tool present here, and all such tools
 /// must declare an `# output:` type (workflow-dsl.md §3). `workflows` maps each
 /// name a `run` may reference (the transitive closure) to its parsed AST; an
 /// empty map is fine for a workflow that never uses `run`.
@@ -257,7 +257,7 @@ fn infer(expr: &Expr, env: &TypeEnv, ctx: &Ctx, chain: &[String]) -> Result<Type
                 .ok_or_else(|| TypeError(format!("unknown workflow `{name}`")))?;
 
             // Every supplied arg must be a declared input of matching type, and
-            // every declared input must be supplied — mirroring a tool `call`.
+            // every declared input must be supplied — mirroring `run tool`.
             for (key, val_expr) in args {
                 let input = callee
                     .inputs
@@ -480,7 +480,7 @@ mod tests {
     }
 
     #[test]
-    fn infers_call_output_type() {
+    fn infers_run_tool_output_type() {
         let t = tool(
             "ping",
             vec![("HOST", Type::String)],
@@ -501,28 +501,28 @@ mod tests {
     }
 
     #[test]
-    fn rejects_call_with_missing_param() {
+    fn rejects_run_tool_with_missing_param() {
         let t = tool("ping", vec![("HOST", Type::String)], Some(Type::String));
         let wf = parse("r = run tool ping {}").unwrap();
         assert!(check(&wf, &empty_registry(), &[t], &HashMap::new()).is_err());
     }
 
     #[test]
-    fn rejects_call_with_wrong_param_type() {
+    fn rejects_run_tool_with_wrong_param_type() {
         let t = tool("ping", vec![("COUNT", Type::Number)], Some(Type::String));
         let wf = parse(r#"r = run tool ping { COUNT: "five" }"#).unwrap();
         assert!(check(&wf, &empty_registry(), &[t], &HashMap::new()).is_err());
     }
 
     #[test]
-    fn rejects_call_to_tool_without_output_type() {
+    fn rejects_run_tool_without_output_type() {
         let t = tool("ping", vec![], None);
         let wf = parse("r = run tool ping {}").unwrap();
         assert!(check(&wf, &empty_registry(), &[t], &HashMap::new()).is_err());
     }
 
     #[test]
-    fn infers_ask_as_specialist_envelope() {
+    fn infers_run_specialist_as_envelope() {
         let wf = parse(r#"s = run specialist reporter "hello""#).unwrap();
         let registry = registry_with_specialist("reporter");
         let env = check(&wf, &registry, &[], &HashMap::new()).unwrap();
@@ -530,14 +530,14 @@ mod tests {
     }
 
     #[test]
-    fn rejects_ask_with_non_string_prompt() {
+    fn rejects_run_specialist_with_non_string_prompt() {
         let wf = parse("s = run specialist reporter 42").unwrap();
         let registry = registry_with_specialist("reporter");
         assert!(check(&wf, &registry, &[], &HashMap::new()).is_err());
     }
 
     #[test]
-    fn rejects_ask_for_unknown_specialist() {
+    fn rejects_run_specialist_for_unknown_specialist() {
         let wf = parse(r#"s = run specialist ghost "hi""#).unwrap();
         assert!(check(&wf, &empty_registry(), &[], &HashMap::new()).is_err());
     }

@@ -307,7 +307,7 @@ mod tests {
     }
 
     #[test]
-    fn referenced_collects_call_tools_and_specialist_tools() {
+    fn referenced_collects_tool_and_specialist_names() {
         let mut registry = Registry::default();
         registry.specialists.insert(
             "writer".to_string(),
@@ -324,7 +324,7 @@ mod tests {
         );
         let wf = parse("a = run tool fetch {}\n\nb = run specialist writer \"hi\"").unwrap();
         let refs = referenced(&wf, &registry);
-        // Direct `call` tool plus the specialist's own tool, and the specialist.
+        // Direct `run tool` plus the specialist's own tool, and the specialist.
         assert_eq!(
             refs.tools,
             ["fetch".to_string(), "search".to_string()]
