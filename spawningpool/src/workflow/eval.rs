@@ -43,7 +43,9 @@ type Env = HashMap<String, serde_json::Value>;
 /// workflow, pre-resolved with script paths. `keys` maps a provider name to its
 /// API key; each specialist call is authenticated with its own provider's key
 /// (a provider absent from the map runs without one), and its constrained-decoding
-/// mode comes from that provider's definition in `registry`.
+/// mode comes from that provider's definition in `registry`. `inputs` supplies a
+/// value for each declared `# inputs:` entry (workflow-dsl.md §5.1), seeded into
+/// scope before the first statement; build it with [`super::resolve_inputs`].
 ///
 /// Returns the value produced by the last statement, or `Null` if the workflow
 /// has no statements. Tool and specialist outputs compose through JSON values.
@@ -53,6 +55,7 @@ pub async fn eval(
     tools: &[ToolDef],
     client: &Client,
     keys: &HashMap<String, String>,
+    inputs: &HashMap<String, serde_json::Value>,
 ) -> Result<serde_json::Value, WorkflowError> {
     let ctx = EvalCtx {
         registry,
@@ -60,7 +63,7 @@ pub async fn eval(
         client,
         keys,
     };
-    let mut env = Env::new();
+    let mut env: Env = inputs.clone();
     let mut last = serde_json::Value::Null;
 
     for stmt in &workflow.statements {
@@ -444,7 +447,8 @@ mod tests {
         let registry = Registry::default();
         let client = crate::ai::Client::new();
         let keys = HashMap::new();
-        eval(&wf, &registry, &[], &client, &keys).await
+        let inputs = HashMap::new();
+        eval(&wf, &registry, &[], &client, &keys, &inputs).await
     }
 
     #[tokio::test]
@@ -463,6 +467,20 @@ mod tests {
     async fn evaluates_bool_literal() {
         let v = eval_src("x = true").await.unwrap();
         assert_eq!(v, serde_json::json!(true));
+    }
+
+    #[tokio::test]
+    async fn seeds_declared_inputs_into_scope() {
+        let wf = parse("# inputs: CITY:string\n\ngreeting = \"hi \" + CITY").unwrap();
+        let registry = Registry::default();
+        let client = crate::ai::Client::new();
+        let keys = HashMap::new();
+        let mut inputs = HashMap::new();
+        inputs.insert("CITY".to_string(), serde_json::json!("Portland"));
+        let v = eval(&wf, &registry, &[], &client, &keys, &inputs)
+            .await
+            .unwrap();
+        assert_eq!(v, serde_json::json!("hi Portland"));
     }
 
     #[tokio::test]
@@ -625,7 +643,8 @@ mod tests {
         let client = crate::ai::Client::new();
         let keys = HashMap::new();
 
-        let val = eval(&wf, &registry, &[tool_def], &client, &keys)
+        let inputs = HashMap::new();
+        let val = eval(&wf, &registry, &[tool_def], &client, &keys, &inputs)
             .await
             .unwrap();
         std::fs::remove_file(&script_path).ok();
@@ -661,7 +680,8 @@ mod tests {
         let client = crate::ai::Client::new();
         let keys = HashMap::new();
 
-        let err = eval(&wf, &registry, &[tool_def], &client, &keys)
+        let inputs = HashMap::new();
+        let err = eval(&wf, &registry, &[tool_def], &client, &keys, &inputs)
             .await
             .unwrap_err();
         std::fs::remove_file(&script_path).ok();

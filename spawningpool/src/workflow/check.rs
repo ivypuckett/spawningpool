@@ -62,6 +62,11 @@ pub fn check(
     tools: &[ToolDef],
 ) -> Result<TypeEnv, TypeError> {
     let mut env = TypeEnv::new();
+    // Declared inputs are in scope as typed variables from the first statement
+    // (workflow-dsl.md §5.1).
+    for input in &workflow.inputs {
+        env.insert(input.name.clone(), input.ty.clone());
+    }
     for stmt in &workflow.statements {
         let ty = infer(&stmt.expr, &env, registry, tools)?;
         env.insert(stmt.name.clone(), ty);
@@ -479,6 +484,21 @@ mod tests {
     #[test]
     fn rejects_undefined_variable() {
         let wf = parse("v = x").unwrap();
+        assert!(check(&wf, &empty_registry(), &[]).is_err());
+    }
+
+    #[test]
+    fn declared_inputs_are_in_scope_with_their_types() {
+        let wf = parse("# inputs: CITY:string, COUNT:number\n\nn = COUNT + 1").unwrap();
+        let env = check(&wf, &empty_registry(), &[]).unwrap();
+        assert_eq!(env["CITY"], Type::String);
+        assert_eq!(env["n"], Type::Number);
+    }
+
+    #[test]
+    fn rejects_input_used_at_the_wrong_type() {
+        // CITY is a string, so adding a number to it is a type error.
+        let wf = parse("# inputs: CITY:string\n\nbad = CITY + 1").unwrap();
         assert!(check(&wf, &empty_registry(), &[]).is_err());
     }
 }

@@ -2,6 +2,8 @@
 //! (workflow-dsl.md §5–6).
 
 use super::ast::{AccessKey, BinOp, Expr, Statement, Workflow};
+use crate::script::parse_params;
+use crate::types::Param;
 
 /// A parse error with a human-readable message.
 #[derive(Debug, Clone, PartialEq)]
@@ -570,6 +572,34 @@ impl Parser {
 
 // ── Entry point ───────────────────────────────────────────────────────────────
 
+/// Pull the `# inputs:` declaration (if any) out of the source and blank every
+/// full-line `#` comment so it acts as a separator rather than reaching the
+/// tokenizer. The first `# inputs:` line wins (mirroring tool headers); a
+/// comment line is any line whose first non-space character is `#`.
+fn extract_header(source: &str) -> Result<(Vec<Param>, String), ParseError> {
+    let mut inputs: Option<Vec<Param>> = None;
+    let mut stripped = String::with_capacity(source.len());
+
+    for line in source.lines() {
+        if let Some(comment) = line.trim_start().strip_prefix('#') {
+            if let Some(rest) = comment.trim().strip_prefix("inputs:") {
+                if inputs.is_none() {
+                    inputs = Some(
+                        parse_params(rest)
+                            .map_err(|e| ParseError(format!("invalid `# inputs:`: {e}")))?,
+                    );
+                }
+            }
+            // Blank the comment line so statement splitting is unaffected.
+        } else {
+            stripped.push_str(line);
+        }
+        stripped.push('\n');
+    }
+
+    Ok((inputs.unwrap_or_default(), stripped))
+}
+
 /// Split a workflow source into statement chunks. Statements are separated by
 /// blank lines (lines containing only whitespace). A single blank line ends
 /// the current chunk; successive blank lines are treated as one separator.
@@ -602,7 +632,8 @@ fn split_statements(source: &str) -> Vec<String> {
 /// treated as ordinary whitespace. Returns a [`ParseError`] if the source
 /// doesn't conform to the DSL grammar (workflow-dsl.md §5–6).
 pub fn parse(source: &str) -> Result<Workflow, ParseError> {
-    let chunks = split_statements(source);
+    let (inputs, body) = extract_header(source)?;
+    let chunks = split_statements(&body);
     let mut statements = Vec::new();
 
     for (i, chunk) in chunks.iter().enumerate() {
@@ -621,7 +652,7 @@ pub fn parse(source: &str) -> Result<Workflow, ParseError> {
         statements.push(stmt);
     }
 
-    Ok(Workflow { statements })
+    Ok(Workflow { inputs, statements })
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
@@ -858,5 +889,52 @@ result = { "city": city, "ok": weather.reachable, "report": summary.output }"#;
     #[test]
     fn rejects_unknown_character() {
         assert!(parse("x = @foo").is_err());
+    }
+
+    #[test]
+    fn parses_inputs_header_into_typed_params() {
+        let wf = parse("# inputs: CITY:string, COUNT:number\n\nx = CITY").unwrap();
+        assert_eq!(
+            wf.inputs,
+            vec![
+                Param {
+                    name: "CITY".to_string(),
+                    ty: crate::types::Type::String,
+                },
+                Param {
+                    name: "COUNT".to_string(),
+                    ty: crate::types::Type::Number,
+                },
+            ]
+        );
+        assert_eq!(wf.statements.len(), 1);
+        assert_eq!(wf.statements[0].name, "x");
+    }
+
+    #[test]
+    fn no_inputs_header_yields_empty_inputs() {
+        let wf = parse("x = 1").unwrap();
+        assert!(wf.inputs.is_empty());
+    }
+
+    #[test]
+    fn comment_lines_are_ignored_and_dont_merge_statements() {
+        let wf = parse("# a leading note\nx = 1\n# between\n\ny = 2").unwrap();
+        assert!(wf.inputs.is_empty());
+        assert_eq!(wf.statements.len(), 2);
+        assert_eq!(wf.statements[0].name, "x");
+        assert_eq!(wf.statements[1].name, "y");
+    }
+
+    #[test]
+    fn first_inputs_header_wins() {
+        let wf = parse("# inputs: A:string\n# inputs: B:number\n\nx = A").unwrap();
+        assert_eq!(wf.inputs.len(), 1);
+        assert_eq!(wf.inputs[0].name, "A");
+    }
+
+    #[test]
+    fn rejects_malformed_inputs_header() {
+        assert!(parse("# inputs: COUNT:int\n\nx = 1").is_err());
     }
 }
