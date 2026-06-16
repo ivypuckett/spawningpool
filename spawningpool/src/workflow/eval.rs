@@ -281,7 +281,7 @@ fn eval_expr<'ctx>(
 
                 // Evaluate each argument to a typed JSON value and seed it as the
                 // callee's input — workflow inputs flow as values, not stringified
-                // env vars the way a tool `call` passes them.
+                // env vars the way `run tool` passes them.
                 let mut sub_inputs = HashMap::new();
                 for (key, val_expr) in args {
                     let val = eval_expr(val_expr, env.clone(), ctx, visited.clone()).await?;
@@ -665,7 +665,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn call_runs_tool_script_and_reads_output() {
+    async fn run_tool_runs_script_and_reads_output() {
         use std::os::unix::fs::PermissionsExt;
 
         let script_path = std::env::temp_dir().join(format!(
@@ -721,7 +721,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn call_errors_when_tool_omits_sp_output_path() {
+    async fn run_tool_errors_when_sp_output_path_omitted() {
         use std::os::unix::fs::PermissionsExt;
 
         let script_path = std::env::temp_dir().join(format!(
