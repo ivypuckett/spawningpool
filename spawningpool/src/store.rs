@@ -5,6 +5,18 @@
 //! when set. A missing file loads as an empty registry, so the first write
 //! creates it. Both `spawningpool` and any other front-end share this module so they read
 //! and write the registry through one path-resolution policy.
+//!
+//! # Concurrency
+//!
+//! Each [`save_to`] is atomic (temp file + rename), so a crash or a second
+//! writer can never leave a half-written, unparseable file. It does **not**,
+//! however, make a read-modify-write *transactional*: this layer assumes a
+//! single writer at a time. If two processes each [`load`], mutate, and save
+//! concurrently, the later rename wins and the earlier process's change is
+//! silently lost (e.g. a long-lived TUI session saving over a `define` run
+//! meanwhile in another terminal). The data is never corrupted, only an update
+//! dropped. Closing that window — an mtime check that refuses a stale
+//! overwrite — is tracked as future work, not handled here.
 
 use std::path::{Path, PathBuf};
 
@@ -91,8 +103,10 @@ pub fn load_from(path: &Path) -> Result<Registry, String> {
 /// Save the registry to an explicit path, creating parent directories as needed.
 ///
 /// The write is atomic: the JSON goes to a sibling temp file that is then renamed
-/// over the target, so a crash mid-write (or a second writer, once a UI exists)
-/// can't leave a half-written, unparseable registry behind.
+/// over the target, so a crash mid-write (or a concurrent writer) can't leave a
+/// half-written, unparseable registry behind. Atomicity is per-write only; see
+/// the [module-level concurrency note](self#concurrency) for the single-writer
+/// assumption this does not cover.
 pub fn save_to(path: &Path, registry: &Registry) -> Result<(), String> {
     if let Some(parent) = path.parent() {
         if !parent.as_os_str().is_empty() {
