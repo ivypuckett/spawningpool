@@ -26,6 +26,7 @@ fn tool(name: &str, script: PathBuf) -> ToolDef {
         description: String::new(),
         params: vec![],
         output: None,
+        exits: vec![],
     }
 }
 
@@ -50,6 +51,7 @@ fn build_context_carries_system_prompt_user_turn_and_tools() {
             ty: crate::types::Type::String,
         }],
         output: None,
+        exits: vec![],
     }];
 
     let ctx = build_context(&specialist, "ping example.com", &tools);

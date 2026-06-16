@@ -100,6 +100,35 @@ a fix. A script you drop into the folder by hand is checked when it's first run.
 - **Non-zero exit** → reported to the model as a tool *error* (agentic
   specialists can read it and retry) or surfaced (constrained specialists).
 
+### Declaring what your exit codes mean
+
+A tool can document its exit statuses with an optional `# exits:` header. Each
+entry is `<code> <name>` with an optional quoted description:
+
+```sh
+#!/bin/sh
+# desc: Ping a host and report reachability
+# params: HOST
+# exits: 0 ok "host reachable",
+#        1 unreachable "host did not respond",
+#        2 badArgs "invalid arguments or unknown host"
+```
+
+- `<code>` is the integer exit status.
+- `<name>` is a **compilable identifier** — same rule as a workflow identifier
+  (a letter or `_` start, then letters, digits, `_`, or an interior `-`) — so a
+  later workflow stage can branch on it by name. Names must be unique within the
+  tool.
+- the `"description"` is optional human-readable prose; quote it so it can
+  contain commas.
+
+Entries are separated by top-level commas, so the header can wrap across lines
+as above. Declaring `# exits:` is **additive**: listed codes get their meaning,
+and any code you don't list falls back to the success/non-zero rule above. The
+names and descriptions are appended to the tool's description the model reads,
+so an agentic specialist can tell *why* a call failed. As with the other
+directives, the first `# exits:` line wins and a malformed entry is an error.
+
 ## End-to-end example
 
 ```sh

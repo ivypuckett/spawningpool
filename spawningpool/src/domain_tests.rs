@@ -50,6 +50,7 @@ fn tool_def_lowers_params_into_required_typed_props() {
             },
         ],
         output: None,
+        exits: vec![],
     }
     .to_tool();
 
@@ -62,6 +63,50 @@ fn tool_def_lowers_params_into_required_typed_props() {
         tool.parameters["required"],
         serde_json::json!(["env", "replicas"])
     );
+}
+
+#[test]
+fn tool_def_appends_exit_codes_to_description() {
+    let tool = ToolDef {
+        name: "ping".to_string(),
+        script: PathBuf::from("ping.sh"),
+        description: "Ping a host".to_string(),
+        params: vec![],
+        output: None,
+        exits: vec![
+            ExitCode {
+                code: 0,
+                name: "ok".to_string(),
+                desc: Some("host reachable".to_string()),
+            },
+            ExitCode {
+                code: 2,
+                name: "badArgs".to_string(),
+                desc: None,
+            },
+        ],
+    }
+    .to_tool();
+
+    assert_eq!(
+        tool.description,
+        "Ping a host\n\nExit codes:\n- 0 (ok): host reachable\n- 2 (badArgs)"
+    );
+}
+
+#[test]
+fn tool_def_description_unchanged_without_exits() {
+    let tool = ToolDef {
+        name: "ping".to_string(),
+        script: PathBuf::from("ping.sh"),
+        description: "Ping a host".to_string(),
+        params: vec![],
+        output: None,
+        exits: vec![],
+    }
+    .to_tool();
+
+    assert_eq!(tool.description, "Ping a host");
 }
 
 #[test]

@@ -25,6 +25,11 @@ itself (parser, type-checker, evaluator) is not included yet.
   runner sets `SP_OUTPUT_PATH` to a fresh temp file; a tool's JSON written there
   is read back as `ScriptRun::structured_output`. stdout/stderr remain ordinary
   logs and are not parsed.
+- **A `# exits:` header directive declaring exit codes and their meanings.** Each
+  entry is `<code> <name>` with an optional quoted description; the `<name>` is a
+  workflow identifier so a later stage can branch on it. `ScriptSummary`/`ToolDef`
+  carry the parsed `ExitCode`s, and `ToolDef::to_tool` appends them to the
+  description the model reads so an agentic specialist can tell why a call failed.
 
 ## [0.2.0] - 2026-06-12
 

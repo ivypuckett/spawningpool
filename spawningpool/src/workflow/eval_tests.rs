@@ -206,6 +206,7 @@ async fn run_tool_runs_script_and_reads_output() {
             "greeting".to_string(),
             crate::types::Type::String,
         )])),
+        exits: vec![],
     };
 
     let wf = parse(r#"result = run tool greet { NAME: "world" }"#).unwrap();
@@ -252,6 +253,7 @@ async fn run_tool_errors_when_sp_output_path_omitted() {
         description: String::new(),
         params: vec![],
         output: Some(crate::types::Type::String),
+        exits: vec![],
     };
 
     let wf = parse("result = run tool silent {}").unwrap();
@@ -307,6 +309,7 @@ fn echo_tool() -> (ToolDef, std::path::PathBuf) {
             "v".to_string(),
             crate::types::Type::String,
         )])),
+        exits: vec![],
     };
     (tool, script_path)
 }

@@ -34,6 +34,7 @@ pub fn resolve(dir: &Path, name: &str) -> Result<ToolDef, String> {
         description: summary.desc.unwrap_or_default(),
         params: summary.params,
         output: summary.output,
+        exits: summary.exits,
     })
 }
 

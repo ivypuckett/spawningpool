@@ -44,6 +44,7 @@ fn tool(name: &str, params: Vec<(&str, Type)>, output: Option<Type>) -> ToolDef 
             })
             .collect(),
         output,
+        exits: vec![],
     }
 }
 

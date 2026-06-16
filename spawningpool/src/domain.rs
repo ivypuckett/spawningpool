@@ -19,7 +19,7 @@ use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 
 use crate::ai::{Api, CompleteOptions, Model, Reasoning, Tool};
-use crate::types::{Param, Type};
+use crate::types::{ExitCode, Param, Type};
 
 /// Which kind of registry entity a reference or referrer points at. Carried by
 /// [`MissingRef`] and [`Referrer`] so a front-end can describe it however it
@@ -202,12 +202,18 @@ pub struct ToolDef {
     pub params: Vec<Param>,
     /// The tool's declared `# output:` type (workflow-dsl §3), or `None`.
     pub output: Option<Type>,
+    /// The tool's declared `# exits:` codes (see `docs/tools.md`), empty when the
+    /// header declares none.
+    #[serde(default)]
+    pub exits: Vec<ExitCode>,
 }
 
 impl ToolDef {
     /// Lower into the runtime [`Tool`] the model sees, with each parameter
     /// declared as a required property of its declared type (a bare, untyped
-    /// param is `string`; see [`crate::types`]).
+    /// param is `string`; see [`crate::types`]). Declared `# exits:` codes are
+    /// appended to the description so an agentic specialist can read what each
+    /// exit status means.
     pub fn to_tool(&self) -> Tool {
         let properties: serde_json::Map<String, serde_json::Value> = self
             .params
@@ -217,13 +223,33 @@ impl ToolDef {
         let required: Vec<&String> = self.params.iter().map(|p| &p.name).collect();
         Tool {
             name: self.name.clone(),
-            description: self.description.clone(),
+            description: self.describe_with_exits(),
             parameters: serde_json::json!({
                 "type": "object",
                 "properties": properties,
                 "required": required,
             }),
         }
+    }
+
+    /// The tool's description with its `# exits:` codes appended as a readable
+    /// list, or just the bare description when none are declared.
+    fn describe_with_exits(&self) -> String {
+        if self.exits.is_empty() {
+            return self.description.clone();
+        }
+        let mut out = self.description.clone();
+        if !out.is_empty() {
+            out.push_str("\n\n");
+        }
+        out.push_str("Exit codes:");
+        for exit in &self.exits {
+            match &exit.desc {
+                Some(desc) => out.push_str(&format!("\n- {} ({}): {desc}", exit.code, exit.name)),
+                None => out.push_str(&format!("\n- {} ({})", exit.code, exit.name)),
+            }
+        }
+        out
     }
 }
 

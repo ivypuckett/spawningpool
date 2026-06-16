@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use crate::types::{Param, Type};
+use crate::types::{ExitCode, Param, Type};
 
 /// A tool script's declared description, parameters, and output type, parsed
 /// from its header comments.
@@ -22,6 +22,9 @@ pub struct ScriptSummary {
     /// The tool's declared `# output:` type (workflow-dsl §3), or `None` when
     /// the header doesn't declare one.
     pub output: Option<Type>,
+    /// The tool's declared `# exits:` codes (see `docs/tools.md`), empty when the
+    /// header declares none.
+    pub exits: Vec<ExitCode>,
 }
 
 /// The outcome of running a script: whether it exited successfully, its combined
@@ -57,6 +60,7 @@ fn parse_header(contents: &str) -> Result<ScriptSummary, String> {
     let mut params: Option<Vec<Param>> = None;
     let mut output: Option<Type> = None;
     let mut output_seen = false;
+    let mut exits: Option<Vec<ExitCode>> = None;
 
     for line in contents.lines() {
         let Some(comment) = line.trim_start().strip_prefix('#') else {
@@ -81,6 +85,10 @@ fn parse_header(contents: &str) -> Result<ScriptSummary, String> {
                     );
                 }
             }
+        } else if let Some(rest) = comment.strip_prefix("exits:") {
+            if exits.is_none() {
+                exits = Some(parse_exits(rest)?);
+            }
         }
     }
 
@@ -88,7 +96,129 @@ fn parse_header(contents: &str) -> Result<ScriptSummary, String> {
         desc,
         params: params.unwrap_or_default(),
         output,
+        exits: exits.unwrap_or_default(),
     })
+}
+
+/// Parse a `# exits:` value into [`ExitCode`]s. Entries are separated by
+/// top-level commas (so a description may contain commas inside its quotes), and
+/// each entry is `CODE NAME` or `CODE NAME "description"`:
+///
+/// - `CODE` is the integer exit status.
+/// - `NAME` is a DSL identifier (see [`is_dsl_ident`]) so a later workflow stage
+///   can branch on it; names must be unique within the tool.
+/// - the optional `"description"` is the human-readable meaning.
+fn parse_exits(rest: &str) -> Result<Vec<ExitCode>, String> {
+    let mut exits: Vec<ExitCode> = Vec::new();
+    for entry in split_exit_entries(rest) {
+        let (code_tok, after_code) = split_first_word(&entry);
+        let code: i32 = code_tok
+            .parse()
+            .map_err(|_| format!("invalid exit code `{code_tok}` in `# exits:`"))?;
+
+        let (name, after_name) = split_first_word(after_code);
+        if name.is_empty() {
+            return Err(format!("exit code {code} in `# exits:` is missing a name"));
+        }
+        if !is_dsl_ident(&name) {
+            return Err(format!(
+                "exit code name `{name}` in `# exits:` isn't a valid identifier"
+            ));
+        }
+        if exits.iter().any(|e| e.name == name) {
+            return Err(format!("duplicate exit code name `{name}` in `# exits:`"));
+        }
+
+        let desc = parse_exit_desc(after_name, code)?;
+        exits.push(ExitCode { code, name, desc });
+    }
+    Ok(exits)
+}
+
+/// Read an entry's trailing `"description"` (or `None` when absent). Anything
+/// after the closing quote, or an unterminated quote, is an error so a malformed
+/// entry is rejected rather than silently truncated.
+fn parse_exit_desc(rest: &str, code: i32) -> Result<Option<String>, String> {
+    let rest = rest.trim();
+    if rest.is_empty() {
+        return Ok(None);
+    }
+    let inner = rest.strip_prefix('"').ok_or_else(|| {
+        format!("unexpected text after exit code {code} name in `# exits:`; quote the description")
+    })?;
+    let (desc, after) = inner
+        .split_once('"')
+        .ok_or_else(|| format!("unterminated description for exit code {code} in `# exits:`"))?;
+    if !after.trim().is_empty() {
+        return Err(format!(
+            "unexpected text after exit code {code} description in `# exits:`"
+        ));
+    }
+    Ok(Some(desc.to_string()))
+}
+
+/// Split a `# exits:` value into trimmed, non-empty entries on top-level commas,
+/// leaving commas inside a `"..."` description untouched.
+fn split_exit_entries(rest: &str) -> Vec<String> {
+    let mut entries = Vec::new();
+    let mut current = String::new();
+    let mut in_string = false;
+    for c in rest.chars() {
+        match c {
+            '"' => {
+                in_string = !in_string;
+                current.push(c);
+            }
+            ',' if !in_string => {
+                if !current.trim().is_empty() {
+                    entries.push(current.trim().to_string());
+                }
+                current.clear();
+            }
+            _ => current.push(c),
+        }
+    }
+    if !current.trim().is_empty() {
+        entries.push(current.trim().to_string());
+    }
+    entries
+}
+
+/// Split `s` into its first whitespace-delimited word and the (trimmed)
+/// remainder. A word ends at whitespace or a `"`, so `2"oops"` separates the
+/// code/name from a quote with no space.
+fn split_first_word(s: &str) -> (String, &str) {
+    let s = s.trim_start();
+    let end = s
+        .find(|c: char| c.is_whitespace() || c == '"')
+        .unwrap_or(s.len());
+    (s[..end].to_string(), s[end..].trim_start())
+}
+
+/// Whether `name` is a valid DSL identifier (workflow-dsl lexer rule): an ASCII
+/// letter or `_` start, then alphanumerics, `_`, or a `-` that is itself
+/// followed by a letter or `_`. Mirrored here so a `# exits:` name is guaranteed
+/// usable as an identifier at the workflow stage.
+fn is_dsl_ident(name: &str) -> bool {
+    let chars: Vec<char> = name.chars().collect();
+    match chars.first() {
+        Some(c) if c.is_ascii_alphabetic() || *c == '_' => {}
+        _ => return false,
+    }
+    for (i, c) in chars.iter().enumerate().skip(1) {
+        if c.is_ascii_alphanumeric() || *c == '_' {
+            continue;
+        }
+        if *c == '-'
+            && chars
+                .get(i + 1)
+                .is_some_and(|n| n.is_ascii_alphabetic() || *n == '_')
+        {
+            continue;
+        }
+        return false;
+    }
+    true
 }
 
 /// Parse a `# params:` value into typed parameters. Each token is `NAME` (type
