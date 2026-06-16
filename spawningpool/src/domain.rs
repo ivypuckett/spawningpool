@@ -4,7 +4,7 @@
 //! Nothing here talks to a provider or the filesystem. A [`ProviderDef`]/
 //! [`ModelDef`]/[`Specialist`] is plain, serializable data that `spawningpool define`
 //! writes and `spawningpool list` reads. The bridges ([`ModelDef::resolve`],
-//! [`Registry::resolve_model`]) lower these definitions into the [`ai::Model`]
+//! [`Registry::resolve_model`]) lower these definitions into the [`crate::ai::Model`]
 //! the client executes. Tools are the exception: they live as scripts in a
 //! folder (see [`crate::tools`]), not in the [`Registry`], so a [`ToolDef`] here
 //! is a derived view of one of those scripts rather than persisted data.
