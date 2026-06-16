@@ -286,6 +286,12 @@ If the run is invoked with `$SP_OUTPUT_PATH` set, the result JSON is also writte
 there (in addition to stdout), matching the contract a tool obeys — so a workflow
 is composable as a tool by an outer runner.
 
+A workflow can also nest other workflows in-language with the `run` verb
+([§6.8](workflow-dsl.md#68-workflow-call)); the whole reachable closure is loaded,
+type-checked (callee result types inferred recursively), and cycle-checked before
+anything runs. Because `run` resolves in `workflows/` and `call` in `tools/`, a
+tool and a workflow may share a name without ambiguity.
+
 Each specialist invoked by the workflow's `ask` expressions authenticates with
 its own provider's key, sourced from that provider's `--api-key-env`; a workflow
 can freely mix providers. A workflow that only calls tools needs no key.

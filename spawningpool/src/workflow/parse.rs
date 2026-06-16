@@ -426,6 +426,10 @@ impl Parser {
                 self.bump();
                 return self.parse_call();
             }
+            Some("run") => {
+                self.bump();
+                return self.parse_run();
+            }
             Some("ask") => {
                 self.bump();
                 return self.parse_ask();
@@ -510,6 +514,20 @@ impl Parser {
     fn parse_call(&mut self) -> Result<Expr, ParseError> {
         // call tool_name { KEY: expr, ... }
         let tool = self.expect_ident()?;
+        let args = self.parse_named_map()?;
+        Ok(Expr::Call { tool, args })
+    }
+
+    fn parse_run(&mut self) -> Result<Expr, ParseError> {
+        // run workflow_name { KEY: expr, ... }
+        let workflow = self.expect_ident()?;
+        let args = self.parse_named_map()?;
+        Ok(Expr::Run { workflow, args })
+    }
+
+    /// Parse a `{ KEY: expr, ... }` argument map — the shared shape of a tool
+    /// `call` and a workflow `run`.
+    fn parse_named_map(&mut self) -> Result<Vec<(String, Expr)>, ParseError> {
         self.expect_token(&Token::LBrace)?;
         let mut args = Vec::new();
         if !matches!(self.peek(), Some(Token::RBrace)) {
@@ -526,7 +544,7 @@ impl Parser {
             }
         }
         self.expect_token(&Token::RBrace)?;
-        Ok(Expr::Call { tool, args })
+        Ok(args)
     }
 
     fn parse_ask(&mut self) -> Result<Expr, ParseError> {
@@ -822,6 +840,21 @@ mod tests {
             Expr::Call {
                 tool: "get-weather".to_string(),
                 args: vec![("CITY".to_string(), var("city"))],
+            }
+        );
+    }
+
+    #[test]
+    fn parses_run_expression() {
+        let wf = parse(r#"r = run deploy { ENV: env, COUNT: 3 }"#).unwrap();
+        assert_eq!(
+            wf.statements[0].expr,
+            Expr::Run {
+                workflow: "deploy".to_string(),
+                args: vec![
+                    ("ENV".to_string(), var("env")),
+                    ("COUNT".to_string(), num(3.0)),
+                ],
             }
         );
     }

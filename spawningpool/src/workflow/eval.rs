@@ -33,6 +33,7 @@ struct EvalCtx<'a> {
     tools: &'a [ToolDef],
     client: &'a Client,
     keys: &'a HashMap<String, String>,
+    workflows: &'a HashMap<String, Workflow>,
 }
 
 type Env = HashMap<String, serde_json::Value>;
@@ -46,6 +47,8 @@ type Env = HashMap<String, serde_json::Value>;
 /// mode comes from that provider's definition in `registry`. `inputs` supplies a
 /// value for each declared `# inputs:` entry (workflow-dsl.md §5.1), seeded into
 /// scope before the first statement; build it with [`super::resolve_inputs`].
+/// `workflows` maps each name a `run` may invoke (the transitive closure) to its
+/// parsed AST; an empty map is fine for a workflow that never uses `run`.
 ///
 /// Returns the value produced by the last statement, or `Null` if the workflow
 /// has no statements. Tool and specialist outputs compose through JSON values.
@@ -56,18 +59,33 @@ pub async fn eval(
     client: &Client,
     keys: &HashMap<String, String>,
     inputs: &HashMap<String, serde_json::Value>,
+    workflows: &HashMap<String, Workflow>,
 ) -> Result<serde_json::Value, WorkflowError> {
     let ctx = EvalCtx {
         registry,
         tools,
         client,
         keys,
+        workflows,
     };
+    eval_workflow(workflow, &ctx, inputs, Vec::new()).await
+}
+
+/// Evaluate one workflow's statements in order, seeded with `inputs`, returning
+/// the last statement's value (or `Null` when there are none). `visited` is the
+/// stack of `run`-nested workflow names in progress, so a cycle is caught rather
+/// than recursing forever.
+async fn eval_workflow<'a>(
+    workflow: &'a Workflow,
+    ctx: &'a EvalCtx<'a>,
+    inputs: &HashMap<String, serde_json::Value>,
+    visited: Vec<String>,
+) -> Result<serde_json::Value, WorkflowError> {
     let mut env: Env = inputs.clone();
     let mut last = serde_json::Value::Null;
 
     for stmt in &workflow.statements {
-        let val = eval_expr(&stmt.expr, env.clone(), &ctx).await?;
+        let val = eval_expr(&stmt.expr, env.clone(), ctx, visited.clone()).await?;
         last = val.clone();
         env.insert(stmt.name.clone(), val);
     }
@@ -81,6 +99,7 @@ fn eval_expr<'ctx>(
     expr: &'ctx Expr,
     env: Env,
     ctx: &'ctx EvalCtx<'ctx>,
+    visited: Vec<String>,
 ) -> LocalBoxFuture<'ctx, Result<serde_json::Value, WorkflowError>> {
     Box::pin(async move {
         match expr {
@@ -93,7 +112,7 @@ fn eval_expr<'ctx>(
             Expr::Object(fields) => {
                 let mut map = serde_json::Map::new();
                 for (k, v_expr) in fields {
-                    let val = eval_expr(v_expr, env.clone(), ctx).await?;
+                    let val = eval_expr(v_expr, env.clone(), ctx, visited.clone()).await?;
                     map.insert(k.clone(), val);
                 }
                 Ok(serde_json::Value::Object(map))
@@ -105,7 +124,7 @@ fn eval_expr<'ctx>(
                 .ok_or_else(|| WorkflowError(format!("undefined variable `{name}`"))),
 
             Expr::Not(inner) => {
-                let val = eval_expr(inner, env, ctx).await?;
+                let val = eval_expr(inner, env, ctx, visited.clone()).await?;
                 let b = val.as_bool().ok_or_else(|| {
                     WorkflowError(format!("operator `!` requires bool, got {val}"))
                 })?;
@@ -113,34 +132,34 @@ fn eval_expr<'ctx>(
             }
 
             Expr::BinOp { op, lhs, rhs } => {
-                let l = eval_expr(lhs, env.clone(), ctx).await?;
-                let r = eval_expr(rhs, env, ctx).await?;
+                let l = eval_expr(lhs, env.clone(), ctx, visited.clone()).await?;
+                let r = eval_expr(rhs, env, ctx, visited.clone()).await?;
                 eval_binop(op, l, r)
             }
 
             Expr::Access { base, keys } => {
-                let mut val = eval_expr(base, env.clone(), ctx).await?;
+                let mut val = eval_expr(base, env.clone(), ctx, visited.clone()).await?;
                 for key in keys {
-                    val = eval_access(val, key, env.clone(), ctx).await?;
+                    val = eval_access(val, key, env.clone(), ctx, visited.clone()).await?;
                 }
                 Ok(val)
             }
 
             Expr::If { branches, default } => {
                 for (cond, result) in branches {
-                    let cond_val = eval_expr(cond, env.clone(), ctx).await?;
+                    let cond_val = eval_expr(cond, env.clone(), ctx, visited.clone()).await?;
                     let b = cond_val.as_bool().ok_or_else(|| {
                         WorkflowError(format!("if condition must be bool, got {cond_val}"))
                     })?;
                     if b {
-                        return eval_expr(result, env, ctx).await;
+                        return eval_expr(result, env, ctx, visited.clone()).await;
                     }
                 }
-                eval_expr(default, env, ctx).await
+                eval_expr(default, env, ctx, visited.clone()).await
             }
 
             Expr::For { item, array, body } => {
-                let arr_val = eval_expr(array, env.clone(), ctx).await?;
+                let arr_val = eval_expr(array, env.clone(), ctx, visited.clone()).await?;
                 let elements = arr_val
                     .as_array()
                     .ok_or_else(|| {
@@ -151,7 +170,7 @@ fn eval_expr<'ctx>(
                 for element in elements {
                     let mut inner_env = env.clone();
                     inner_env.insert(item.clone(), element);
-                    let result = eval_expr(body, inner_env, ctx).await?;
+                    let result = eval_expr(body, inner_env, ctx, visited.clone()).await?;
                     results.push(result);
                 }
                 Ok(serde_json::Value::Array(results))
@@ -166,7 +185,7 @@ fn eval_expr<'ctx>(
 
                 let mut vars = HashMap::new();
                 for (key, val_expr) in args {
-                    let val = eval_expr(val_expr, env.clone(), ctx).await?;
+                    let val = eval_expr(val_expr, env.clone(), ctx, visited.clone()).await?;
                     let s = match &val {
                         serde_json::Value::String(s) => s.clone(),
                         other => other.to_string(),
@@ -193,7 +212,7 @@ fn eval_expr<'ctx>(
                 specialist: spec_name,
                 prompt,
             } => {
-                let prompt_val = eval_expr(prompt, env, ctx).await?;
+                let prompt_val = eval_expr(prompt, env, ctx, visited.clone()).await?;
                 let prompt_str = prompt_val.as_str().ok_or_else(|| {
                     WorkflowError(format!("ask prompt must be a string, got {prompt_val}"))
                 })?;
@@ -248,6 +267,35 @@ fn eval_expr<'ctx>(
 
                 Ok(collected.into_envelope(spec_name, &specialist.model))
             }
+
+            Expr::Run {
+                workflow: wf_name,
+                args,
+            } => {
+                let callee = ctx
+                    .workflows
+                    .get(wf_name)
+                    .ok_or_else(|| WorkflowError(format!("unknown workflow `{wf_name}`")))?;
+
+                // Evaluate each argument to a typed JSON value and seed it as the
+                // callee's input — workflow inputs flow as values, not stringified
+                // env vars the way a tool `call` passes them.
+                let mut sub_inputs = HashMap::new();
+                for (key, val_expr) in args {
+                    let val = eval_expr(val_expr, env.clone(), ctx, visited.clone()).await?;
+                    sub_inputs.insert(key.clone(), val);
+                }
+
+                if visited.iter().any(|n| n == wf_name) {
+                    return Err(WorkflowError(format!(
+                        "workflow cycle detected: {} -> {wf_name}",
+                        visited.join(" -> ")
+                    )));
+                }
+                let mut chain = visited.clone();
+                chain.push(wf_name.clone());
+                eval_workflow(callee, ctx, &sub_inputs, chain).await
+            }
         }
     })
 }
@@ -258,6 +306,7 @@ fn eval_access<'ctx>(
     key: &'ctx AccessKey,
     env: Env,
     ctx: &'ctx EvalCtx<'ctx>,
+    visited: Vec<String>,
 ) -> LocalBoxFuture<'ctx, Result<serde_json::Value, WorkflowError>> {
     Box::pin(async move {
         match key {
@@ -279,7 +328,7 @@ fn eval_access<'ctx>(
                 ))),
             },
             AccessKey::Computed(expr) => {
-                let idx = eval_expr(expr, env, ctx).await?;
+                let idx = eval_expr(expr, env, ctx, visited.clone()).await?;
                 match val {
                     serde_json::Value::Array(arr) => {
                         let i = idx.as_u64().ok_or_else(|| {
@@ -448,7 +497,8 @@ mod tests {
         let client = crate::ai::Client::new();
         let keys = HashMap::new();
         let inputs = HashMap::new();
-        eval(&wf, &registry, &[], &client, &keys, &inputs).await
+        let workflows = HashMap::new();
+        eval(&wf, &registry, &[], &client, &keys, &inputs, &workflows).await
     }
 
     #[tokio::test]
@@ -477,7 +527,8 @@ mod tests {
         let keys = HashMap::new();
         let mut inputs = HashMap::new();
         inputs.insert("CITY".to_string(), serde_json::json!("Portland"));
-        let v = eval(&wf, &registry, &[], &client, &keys, &inputs)
+        let workflows = HashMap::new();
+        let v = eval(&wf, &registry, &[], &client, &keys, &inputs, &workflows)
             .await
             .unwrap();
         assert_eq!(v, serde_json::json!("hi Portland"));
@@ -552,13 +603,15 @@ mod tests {
         let registry = Registry::default();
         let client = crate::ai::Client::new();
         let keys = HashMap::new();
+        let workflows = HashMap::new();
         let ctx = EvalCtx {
             registry: &registry,
             tools: &[],
             client: &client,
             keys: &keys,
+            workflows: &workflows,
         };
-        let val = eval_access(arr, &AccessKey::Index(1), Env::new(), &ctx)
+        let val = eval_access(arr, &AccessKey::Index(1), Env::new(), &ctx, Vec::new())
             .await
             .unwrap();
         assert_eq!(val, serde_json::json!(20));
@@ -589,16 +642,20 @@ mod tests {
         let registry = Registry::default();
         let client = crate::ai::Client::new();
         let keys = HashMap::new();
+        let workflows = HashMap::new();
         let ctx = EvalCtx {
             registry: &registry,
             tools: &[],
             client: &client,
             keys: &keys,
+            workflows: &workflows,
         };
 
         let mut last = serde_json::Value::Null;
         for stmt in &wf.statements {
-            let val = eval_expr(&stmt.expr, env.clone(), &ctx).await.unwrap();
+            let val = eval_expr(&stmt.expr, env.clone(), &ctx, Vec::new())
+                .await
+                .unwrap();
             last = val.clone();
             env.insert(stmt.name.clone(), val);
         }
@@ -644,9 +701,18 @@ mod tests {
         let keys = HashMap::new();
 
         let inputs = HashMap::new();
-        let val = eval(&wf, &registry, &[tool_def], &client, &keys, &inputs)
-            .await
-            .unwrap();
+        let workflows = HashMap::new();
+        let val = eval(
+            &wf,
+            &registry,
+            &[tool_def],
+            &client,
+            &keys,
+            &inputs,
+            &workflows,
+        )
+        .await
+        .unwrap();
         std::fs::remove_file(&script_path).ok();
 
         assert_eq!(val, serde_json::json!({"greeting": "hello world"}));
@@ -681,11 +747,105 @@ mod tests {
         let keys = HashMap::new();
 
         let inputs = HashMap::new();
-        let err = eval(&wf, &registry, &[tool_def], &client, &keys, &inputs)
-            .await
-            .unwrap_err();
+        let workflows = HashMap::new();
+        let err = eval(
+            &wf,
+            &registry,
+            &[tool_def],
+            &client,
+            &keys,
+            &inputs,
+            &workflows,
+        )
+        .await
+        .unwrap_err();
         std::fs::remove_file(&script_path).ok();
 
         assert!(err.0.contains("SP_OUTPUT_PATH"));
+    }
+
+    /// A tiny tool that echoes `NAME` into a structured `{ "v": string }`.
+    #[cfg(test)]
+    fn echo_tool() -> (ToolDef, std::path::PathBuf) {
+        use std::os::unix::fs::PermissionsExt;
+        let script_path = std::env::temp_dir().join(format!(
+            "sp_wf_echo_{}_{}.sh",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::write(
+            &script_path,
+            "#!/bin/sh\nprintf '{\"v\":\"%s\"}' \"$NAME\" > \"$SP_OUTPUT_PATH\"\n",
+        )
+        .unwrap();
+        std::fs::set_permissions(&script_path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let tool = ToolDef {
+            name: "echo".to_string(),
+            script: script_path.clone(),
+            description: String::new(),
+            params: vec![crate::types::Param {
+                name: "NAME".to_string(),
+                ty: crate::types::Type::String,
+            }],
+            output: Some(crate::types::Type::Object(vec![(
+                "v".to_string(),
+                crate::types::Type::String,
+            )])),
+        };
+        (tool, script_path)
+    }
+
+    #[tokio::test]
+    async fn run_nests_a_workflow_passing_inputs() {
+        // The outer workflow runs `inner`, which calls a tool with the input it
+        // was handed, and reads a field off the nested result.
+        let (tool, script_path) = echo_tool();
+        let inner = parse("# inputs: WHO:string\n\nout = call echo { NAME: WHO }").unwrap();
+        let outer = parse(r#"r = run inner { WHO: "world" }"#).unwrap();
+
+        let mut workflows = HashMap::new();
+        workflows.insert("inner".to_string(), inner);
+
+        let registry = Registry::default();
+        let client = crate::ai::Client::new();
+        let keys = HashMap::new();
+        let inputs = HashMap::new();
+        let val = eval(
+            &outer,
+            &registry,
+            &[tool],
+            &client,
+            &keys,
+            &inputs,
+            &workflows,
+        )
+        .await
+        .unwrap();
+        std::fs::remove_file(&script_path).ok();
+
+        // `run inner` yields inner's last statement — the tool's structured output.
+        assert_eq!(val, serde_json::json!({"v": "world"}));
+    }
+
+    #[tokio::test]
+    async fn run_detects_a_cycle() {
+        // `a` runs `b`, `b` runs `a` — evaluation must stop with a cycle error.
+        let a = parse("x = run b {}").unwrap();
+        let b = parse("y = run a {}").unwrap();
+        let mut workflows = HashMap::new();
+        workflows.insert("a".to_string(), a.clone());
+        workflows.insert("b".to_string(), b);
+
+        let registry = Registry::default();
+        let client = crate::ai::Client::new();
+        let keys = HashMap::new();
+        let inputs = HashMap::new();
+        let err = eval(&a, &registry, &[], &client, &keys, &inputs, &workflows)
+            .await
+            .unwrap_err();
+        assert!(err.0.contains("cycle"), "{}", err.0);
     }
 }

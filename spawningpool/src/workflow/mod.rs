@@ -27,14 +27,16 @@
 //! let tools = spawningpool::tools::resolve_all(&tools_dir, &["get_weather".to_string()])?;
 //!
 //! // Optional: type-check before running.
-//! check(&workflow, &registry, &tools)?;
+//! // No nested workflows here; a `run` would resolve against this map.
+//! let workflows = HashMap::new();
+//! check(&workflow, &registry, &tools, &workflows)?;
 //!
 //! let client = Client::new();
 //! // Map each provider to its API key (here: none needed for a tool-only workflow).
 //! let keys: HashMap<String, String> = HashMap::new();
 //! // Values for the workflow's `# inputs:` (none declared here).
 //! let inputs = spawningpool::workflow::resolve_inputs(&workflow.inputs, &HashMap::new())?;
-//! let result = eval(&workflow, &registry, &tools, &client, &keys, &inputs).await?;
+//! let result = eval(&workflow, &registry, &tools, &client, &keys, &inputs, &workflows).await?;
 //! println!("{result}");
 //! # Ok(())
 //! # }
@@ -162,6 +164,11 @@ pub struct Referenced {
     pub tools: BTreeSet<String>,
     /// Specialist names invoked via `ask`.
     pub specialists: BTreeSet<String>,
+    /// Workflow names invoked via `run` (workflow-dsl.md §6.8). Only the
+    /// directly-referenced workflows; resolving the *transitive* closure (a
+    /// `run` target's own `run` targets) is the caller's job, since this walk
+    /// can't see other workflows' sources.
+    pub workflows: BTreeSet<String>,
 }
 
 /// Walk a workflow to collect every tool and specialist it references.
@@ -207,6 +214,12 @@ fn collect(expr: &Expr, registry: &Registry, refs: &mut Referenced) {
         }
         Expr::Call { tool, args } => {
             refs.tools.insert(tool.clone());
+            for (_, e) in args {
+                collect(e, registry, refs);
+            }
+        }
+        Expr::Run { workflow, args } => {
+            refs.workflows.insert(workflow.clone());
             for (_, e) in args {
                 collect(e, registry, refs);
             }
@@ -321,6 +334,19 @@ mod tests {
         assert_eq!(
             refs.specialists,
             ["writer".to_string()].into_iter().collect()
+        );
+    }
+
+    #[test]
+    fn referenced_collects_run_workflow_names() {
+        let registry = Registry::default();
+        let wf = parse("a = run deploy { ENV: \"prod\" }\n\nb = run notify {}").unwrap();
+        let refs = referenced(&wf, &registry);
+        assert_eq!(
+            refs.workflows,
+            ["deploy".to_string(), "notify".to_string()]
+                .into_iter()
+                .collect()
         );
     }
 

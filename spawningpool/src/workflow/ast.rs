@@ -16,7 +16,7 @@ pub enum BinOp {
     And,
 }
 
-/// Access key used in a member-access chain (workflow-dsl.md §6.8).
+/// Access key used in a member-access chain (workflow-dsl.md §6.9).
 #[derive(Debug, Clone, PartialEq)]
 pub enum AccessKey {
     /// `.ident` — literal key (bare identifier, not a variable).
@@ -69,6 +69,14 @@ pub enum Expr {
     /// Tool call `call tool_name { KEY: expr, ... }` (workflow-dsl.md §6.6).
     Call {
         tool: String,
+        args: Vec<(String, Expr)>,
+    },
+    /// Workflow call `run workflow_name { KEY: expr, ... }` (workflow-dsl.md
+    /// §6.8). Supplies the callee's declared `# inputs:` by name and yields the
+    /// callee's result value; the `run` verb (vs `call`) selects the `workflows/`
+    /// namespace, so a tool and a workflow may share a name without ambiguity.
+    Run {
+        workflow: String,
         args: Vec<(String, Expr)>,
     },
     /// Specialist call `ask specialist prompt_expr` (workflow-dsl.md §6.7).
