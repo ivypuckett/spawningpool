@@ -286,11 +286,13 @@ If the run is invoked with `$SP_OUTPUT_PATH` set, the result JSON is also writte
 there (in addition to stdout), matching the contract a tool obeys — so a workflow
 is composable as a tool by an outer runner.
 
-A workflow can also nest other workflows in-language with the `run` verb
-([§6.8](workflow-dsl.md#68-workflow-call)); the whole reachable closure is loaded,
-type-checked (callee result types inferred recursively), and cycle-checked before
-anything runs. Because `run` resolves in `workflows/` and `call` in `tools/`, a
-tool and a workflow may share a name without ambiguity.
+Inside the DSL, this command's `run <kind>` form is also the verb that invokes
+tools, specialists, and nested workflows ([§6.6](workflow-dsl.md#66-invocation-run-kind)):
+`run tool`, `run specialist`, and `run workflow` (with the same aliases — `spawn`,
+`overseer`, `lenny`/`ling`). Nesting loads the whole reachable workflow closure,
+type-checks it (callee result types inferred recursively), and cycle-checks before
+anything runs; because the kind selects the namespace, a tool and a workflow may
+share a name without ambiguity.
 
 Each specialist invoked by the workflow's `ask` expressions authenticates with
 its own provider's key, sourced from that provider's `--api-key-env`; a workflow

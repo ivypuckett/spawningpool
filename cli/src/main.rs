@@ -76,6 +76,7 @@ enum RunTarget {
         output: Option<OutputFormat>,
     },
     /// Execute a workflow from the `workflows/` folder, by name.
+    #[command(alias = "overseer")]
     Workflow {
         name: String,
         /// A workflow input, as `KEY=VALUE`, matching a `# inputs:` entry.

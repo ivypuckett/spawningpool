@@ -51,7 +51,7 @@ pub fn specialist_return_type() -> Type {
 }
 
 /// The immutable context a check runs against: the registry, the resolvable
-/// tools, and the set of workflows a `run` can resolve (workflow-dsl.md §6.8).
+/// tools, and the set of workflows a `run` can resolve (workflow-dsl.md §6.6).
 struct Ctx<'a> {
     registry: &'a Registry,
     tools: &'a [ToolDef],
@@ -184,7 +184,7 @@ fn infer(expr: &Expr, env: &TypeEnv, ctx: &Ctx, chain: &[String]) -> Result<Type
             Ok(Type::Array(Box::new(body_ty)))
         }
 
-        Expr::Call { tool, args } => {
+        Expr::RunTool { tool, args } => {
             let tool_def = ctx
                 .tools
                 .iter()
@@ -225,14 +225,14 @@ fn infer(expr: &Expr, env: &TypeEnv, ctx: &Ctx, chain: &[String]) -> Result<Type
             })
         }
 
-        Expr::Ask {
+        Expr::RunSpecialist {
             specialist: name,
             prompt,
         } => {
             let prompt_ty = infer(prompt, env, ctx, chain)?;
             if prompt_ty != Type::String {
                 return Err(TypeError(format!(
-                    "ask prompt must be a string, found `{prompt_ty}`"
+                    "specialist prompt must be a string, found `{prompt_ty}`"
                 )));
             }
             if !ctx.registry.specialists.contains_key(name.as_str()) {
@@ -241,7 +241,7 @@ fn infer(expr: &Expr, env: &TypeEnv, ctx: &Ctx, chain: &[String]) -> Result<Type
             Ok(specialist_return_type())
         }
 
-        Expr::Run {
+        Expr::RunWorkflow {
             workflow: name,
             args,
         } => {
@@ -489,7 +489,7 @@ mod tests {
                 ("ms".to_string(), Type::Number),
             ])),
         );
-        let wf = parse(r#"r = call ping { HOST: "example.com" }"#).unwrap();
+        let wf = parse(r#"r = run tool ping { HOST: "example.com" }"#).unwrap();
         let env = check(&wf, &empty_registry(), &[t], &HashMap::new()).unwrap();
         assert_eq!(
             env["r"],
@@ -503,27 +503,27 @@ mod tests {
     #[test]
     fn rejects_call_with_missing_param() {
         let t = tool("ping", vec![("HOST", Type::String)], Some(Type::String));
-        let wf = parse("r = call ping {}").unwrap();
+        let wf = parse("r = run tool ping {}").unwrap();
         assert!(check(&wf, &empty_registry(), &[t], &HashMap::new()).is_err());
     }
 
     #[test]
     fn rejects_call_with_wrong_param_type() {
         let t = tool("ping", vec![("COUNT", Type::Number)], Some(Type::String));
-        let wf = parse(r#"r = call ping { COUNT: "five" }"#).unwrap();
+        let wf = parse(r#"r = run tool ping { COUNT: "five" }"#).unwrap();
         assert!(check(&wf, &empty_registry(), &[t], &HashMap::new()).is_err());
     }
 
     #[test]
     fn rejects_call_to_tool_without_output_type() {
         let t = tool("ping", vec![], None);
-        let wf = parse("r = call ping {}").unwrap();
+        let wf = parse("r = run tool ping {}").unwrap();
         assert!(check(&wf, &empty_registry(), &[t], &HashMap::new()).is_err());
     }
 
     #[test]
     fn infers_ask_as_specialist_envelope() {
-        let wf = parse(r#"s = ask reporter "hello""#).unwrap();
+        let wf = parse(r#"s = run specialist reporter "hello""#).unwrap();
         let registry = registry_with_specialist("reporter");
         let env = check(&wf, &registry, &[], &HashMap::new()).unwrap();
         assert_eq!(env["s"], specialist_return_type());
@@ -531,14 +531,14 @@ mod tests {
 
     #[test]
     fn rejects_ask_with_non_string_prompt() {
-        let wf = parse("s = ask reporter 42").unwrap();
+        let wf = parse("s = run specialist reporter 42").unwrap();
         let registry = registry_with_specialist("reporter");
         assert!(check(&wf, &registry, &[], &HashMap::new()).is_err());
     }
 
     #[test]
     fn rejects_ask_for_unknown_specialist() {
-        let wf = parse(r#"s = ask ghost "hi""#).unwrap();
+        let wf = parse(r#"s = run specialist ghost "hi""#).unwrap();
         assert!(check(&wf, &empty_registry(), &[], &HashMap::new()).is_err());
     }
 
@@ -586,7 +586,7 @@ mod tests {
     fn run_infers_the_callees_result_type() {
         // `inner` produces a number; `run inner` in the outer workflow is typed
         // as that number, recursively inferred (no `# output:` declaration).
-        let outer = parse("r = run inner { N: 2 }\n\ndoubled = r + r").unwrap();
+        let outer = parse("r = run workflow inner { N: 2 }\n\ndoubled = r + r").unwrap();
         let mut wfs = HashMap::new();
         wfs.insert(
             "inner".to_string(),
@@ -599,7 +599,7 @@ mod tests {
 
     #[test]
     fn rejects_run_with_wrong_input_type() {
-        let outer = parse(r#"r = run inner { N: "two" }"#).unwrap();
+        let outer = parse(r#"r = run workflow inner { N: "two" }"#).unwrap();
         let mut wfs = HashMap::new();
         wfs.insert(
             "inner".to_string(),
@@ -610,7 +610,7 @@ mod tests {
 
     #[test]
     fn rejects_run_with_missing_input() {
-        let outer = parse("r = run inner {}").unwrap();
+        let outer = parse("r = run workflow inner {}").unwrap();
         let mut wfs = HashMap::new();
         wfs.insert(
             "inner".to_string(),
@@ -621,17 +621,17 @@ mod tests {
 
     #[test]
     fn rejects_run_of_unknown_workflow() {
-        let outer = parse("r = run ghost {}").unwrap();
+        let outer = parse("r = run workflow ghost {}").unwrap();
         assert!(check(&outer, &empty_registry(), &[], &HashMap::new()).is_err());
     }
 
     #[test]
     fn detects_run_cycle() {
         // a -> b -> a is rejected rather than recursing forever.
-        let a = parse("x = run b {}").unwrap();
+        let a = parse("x = run workflow b {}").unwrap();
         let mut wfs = HashMap::new();
         wfs.insert("a".to_string(), a.clone());
-        wfs.insert("b".to_string(), parse("y = run a {}").unwrap());
+        wfs.insert("b".to_string(), parse("y = run workflow a {}").unwrap());
         let err = check(&a, &empty_registry(), &[], &wfs).unwrap_err();
         assert!(err.0.contains("cycle"), "{}", err.0);
     }

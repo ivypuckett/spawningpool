@@ -422,17 +422,9 @@ impl Parser {
                 self.bump();
                 return self.parse_for();
             }
-            Some("call") => {
-                self.bump();
-                return self.parse_call();
-            }
-            Some("run") => {
+            Some("run") | Some("spawn") => {
                 self.bump();
                 return self.parse_run();
-            }
-            Some("ask") => {
-                self.bump();
-                return self.parse_ask();
             }
             Some(_) => {
                 // Non-keyword identifier → variable reference.
@@ -511,22 +503,32 @@ impl Parser {
         })
     }
 
-    fn parse_call(&mut self) -> Result<Expr, ParseError> {
-        // call tool_name { KEY: expr, ... }
-        let tool = self.expect_ident()?;
-        let args = self.parse_named_map()?;
-        Ok(Expr::Call { tool, args })
-    }
-
     fn parse_run(&mut self) -> Result<Expr, ParseError> {
-        // run workflow_name { KEY: expr, ... }
-        let workflow = self.expect_ident()?;
-        let args = self.parse_named_map()?;
-        Ok(Expr::Run { workflow, args })
+        // run <kind> <name> <args>. The verb (run/spawn) and the kind keyword
+        // accept the same aliases as the CLI's `run` subcommands.
+        let kind = self.expect_ident()?;
+        let name = self.expect_ident()?;
+        match kind.as_str() {
+            "tool" => Ok(Expr::RunTool {
+                tool: name,
+                args: self.parse_named_map()?,
+            }),
+            "workflow" | "overseer" => Ok(Expr::RunWorkflow {
+                workflow: name,
+                args: self.parse_named_map()?,
+            }),
+            "specialist" | "lenny" | "ling" => Ok(Expr::RunSpecialist {
+                specialist: name,
+                prompt: Box::new(self.parse_expr()?),
+            }),
+            other => Err(ParseError(format!(
+                "expected `tool`, `workflow`, or `specialist` after `run`, found `{other}`"
+            ))),
+        }
     }
 
-    /// Parse a `{ KEY: expr, ... }` argument map — the shared shape of a tool
-    /// `call` and a workflow `run`.
+    /// Parse a `{ KEY: expr, ... }` argument map — the argument shape of
+    /// `run tool` and `run workflow`.
     fn parse_named_map(&mut self) -> Result<Vec<(String, Expr)>, ParseError> {
         self.expect_token(&Token::LBrace)?;
         let mut args = Vec::new();
@@ -545,16 +547,6 @@ impl Parser {
         }
         self.expect_token(&Token::RBrace)?;
         Ok(args)
-    }
-
-    fn parse_ask(&mut self) -> Result<Expr, ParseError> {
-        // ask specialist prompt_expr
-        let specialist = self.expect_ident()?;
-        let prompt = self.parse_expr()?;
-        Ok(Expr::Ask {
-            specialist,
-            prompt: Box::new(prompt),
-        })
     }
 
     fn parse_object_literal(&mut self) -> Result<Expr, ParseError> {
@@ -821,11 +813,11 @@ mod tests {
     }
 
     #[test]
-    fn parses_call_expression() {
-        let wf = parse(r#"w = call get_weather { CITY: city }"#).unwrap();
+    fn parses_run_tool_expression() {
+        let wf = parse(r#"w = run tool get_weather { CITY: city }"#).unwrap();
         assert_eq!(
             wf.statements[0].expr,
-            Expr::Call {
+            Expr::RunTool {
                 tool: "get_weather".to_string(),
                 args: vec![("CITY".to_string(), var("city"))],
             }
@@ -833,11 +825,11 @@ mod tests {
     }
 
     #[test]
-    fn parses_call_with_hyphenated_tool_name() {
-        let wf = parse(r#"w = call get-weather { CITY: city }"#).unwrap();
+    fn parses_run_tool_with_hyphenated_name() {
+        let wf = parse(r#"w = run tool get-weather { CITY: city }"#).unwrap();
         assert_eq!(
             wf.statements[0].expr,
-            Expr::Call {
+            Expr::RunTool {
                 tool: "get-weather".to_string(),
                 args: vec![("CITY".to_string(), var("city"))],
             }
@@ -845,11 +837,11 @@ mod tests {
     }
 
     #[test]
-    fn parses_run_expression() {
-        let wf = parse(r#"r = run deploy { ENV: env, COUNT: 3 }"#).unwrap();
+    fn parses_run_workflow_expression() {
+        let wf = parse(r#"r = run workflow deploy { ENV: env, COUNT: 3 }"#).unwrap();
         assert_eq!(
             wf.statements[0].expr,
-            Expr::Run {
+            Expr::RunWorkflow {
                 workflow: "deploy".to_string(),
                 args: vec![
                     ("ENV".to_string(), var("env")),
@@ -860,11 +852,11 @@ mod tests {
     }
 
     #[test]
-    fn parses_ask_expression() {
-        let wf = parse(r#"s = ask reporter "hello""#).unwrap();
+    fn parses_run_specialist_expression() {
+        let wf = parse(r#"s = run specialist reporter "hello""#).unwrap();
         assert_eq!(
             wf.statements[0].expr,
-            Expr::Ask {
+            Expr::RunSpecialist {
                 specialist: "reporter".to_string(),
                 prompt: Box::new(str("hello")),
             }
@@ -872,13 +864,39 @@ mod tests {
     }
 
     #[test]
+    fn run_verb_and_kinds_accept_aliases() {
+        // `spawn` aliases `run`; `overseer`/`lenny`/`ling` alias the kinds.
+        assert!(matches!(
+            parse("w = spawn tool t {}").unwrap().statements[0].expr,
+            Expr::RunTool { .. }
+        ));
+        assert!(matches!(
+            parse("w = run overseer deploy {}").unwrap().statements[0].expr,
+            Expr::RunWorkflow { .. }
+        ));
+        assert!(matches!(
+            parse(r#"s = run lenny reporter "hi""#).unwrap().statements[0].expr,
+            Expr::RunSpecialist { .. }
+        ));
+        assert!(matches!(
+            parse(r#"s = run ling reporter "hi""#).unwrap().statements[0].expr,
+            Expr::RunSpecialist { .. }
+        ));
+    }
+
+    #[test]
+    fn rejects_run_with_unknown_kind() {
+        assert!(parse("x = run gadget foo {}").is_err());
+    }
+
+    #[test]
     fn parses_full_example_from_doc() {
         // The §5 example from workflow-dsl.md.
         let src = r#"city = "Portland"
 
-weather = call get_weather { CITY: city }
+weather = run tool get_weather { CITY: city }
 
-summary = ask reporter ("Summarize: " + weather.summary)
+summary = run specialist reporter ("Summarize: " + weather.summary)
 
 result = { "city": city, "ok": weather.reachable, "report": summary.output }"#;
         let wf = parse(src).unwrap();
