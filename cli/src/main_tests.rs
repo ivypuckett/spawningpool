@@ -1,7 +1,22 @@
 //! Tests for [`super`]. Extracted from `main.rs` and included via
 //! `#[path]` so they remain a child module with access to private items.
 
-use super::*;
+use std::collections::HashMap;
+use std::path::PathBuf;
+
+use spawningpool::ai::{Api, Reasoning};
+use spawningpool::{ModelDef, ProviderDef, Registry, Specialist};
+
+use crate::cli::{DefineEntity, DeleteEntity, ListKind, ShowEntity};
+use crate::commands::define::{
+    check_model_refs, check_specialist_refs, define, parse_list, parse_reasoning, resolve_script,
+};
+use crate::commands::delete::{
+    affirmative, delete, referrers_of_model, referrers_of_provider, referrers_of_tool,
+};
+use crate::commands::list::list;
+use crate::commands::show::show;
+use crate::display::{available_names, onboarding_message, progress, unset_key_warnings};
 
 /// Serializes the tests below that point `$SPAWNINGPOOL_REGISTRY` at a temp
 /// file, since that env var is process-wide and tests otherwise run parallel.
