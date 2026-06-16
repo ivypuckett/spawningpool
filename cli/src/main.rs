@@ -8,7 +8,7 @@ use spawningpool::ai::{Api, Client, Reasoning, StopReason};
 use spawningpool::{
     EntityKind, ModelDef, ProviderDef, Referrer, Registry, RunEvent, ScriptError, Specialist,
 };
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap, VecDeque};
 use std::io::Write;
 
 mod tui;
@@ -558,32 +558,36 @@ async fn run_specialist(
 /// set, so a workflow obeys the same I/O contract and is composable as a tool.
 async fn run_workflow(name: &str, args: &[String]) -> Result<(), String> {
     let registry = spawningpool::store::load()?;
-    let source = spawningpool::workflow::source(&spawningpool::store::workflows_dir(), name)?;
-    let workflow = spawningpool::workflow::parse(&source)
-        .map_err(|e| format!("workflow '{name}' is invalid: {e}"))?;
 
-    // Coerce the supplied --arg values to the workflow's declared input types
-    // before anything runs, so a missing or mistyped input fails up front.
+    // Load the root and the transitive closure of workflows it can `run`, plus
+    // the union of every tool and specialist referenced across that closure.
+    let closure = load_workflow_closure(name, &registry)?;
+    let workflows = &closure.workflows;
+    let root = workflows
+        .get(name)
+        .expect("the closure always contains the root workflow");
+
+    // Coerce the supplied --arg values to the root's declared input types before
+    // anything runs, so a missing or mistyped input fails up front.
     let provided = parse_kv_args(args)?;
-    let inputs = spawningpool::workflow::resolve_inputs(&workflow.inputs, &provided)
+    let inputs = spawningpool::workflow::resolve_inputs(&root.inputs, &provided)
         .map_err(|e| format!("workflow '{name}': {e}"))?;
 
-    // Resolve exactly the tools the workflow references — its `call` tools plus
-    // the tools its specialists need — so an unrelated broken or ambiguous tool
+    // Resolve exactly the tools the closure references — `call` tools plus the
+    // tools its specialists need — so an unrelated broken or ambiguous tool
     // elsewhere in the catalog can't block a workflow that doesn't use it.
-    let refs = spawningpool::workflow::referenced(&workflow, &registry);
     let tools_dir = spawningpool::store::tools_dir();
-    let tool_names: Vec<String> = refs.tools.iter().cloned().collect();
+    let tool_names: Vec<String> = closure.tools.iter().cloned().collect();
     let tools = spawningpool::tools::resolve_all(&tools_dir, &tool_names)?;
 
-    spawningpool::workflow::check(&workflow, &registry, &tools)
+    spawningpool::workflow::check(root, &registry, &tools, workflows)
         .map_err(|e| format!("workflow '{name}' failed type-checking: {e}"))?;
 
     let keys = provider_keys(&registry);
-    warn_unset_keys(&refs.specialists, &registry, &keys);
+    warn_unset_keys(&closure.specialists, &registry, &keys);
     let client = Client::new();
     let result =
-        spawningpool::workflow::eval(&workflow, &registry, &tools, &client, &keys, &inputs)
+        spawningpool::workflow::eval(root, &registry, &tools, &client, &keys, &inputs, workflows)
             .await
             .map_err(|e| format!("workflow '{name}' failed: {e}"))?;
 
@@ -595,6 +599,48 @@ async fn run_workflow(name: &str, args: &[String]) -> Result<(), String> {
     }
     println!("{result}");
     Ok(())
+}
+
+/// A root workflow and everything reachable from it through `run`: the name→AST
+/// map (always including the root), and the union of tool and specialist names
+/// referenced anywhere in the closure.
+struct WorkflowClosure {
+    workflows: HashMap<String, spawningpool::workflow::Workflow>,
+    tools: BTreeSet<String>,
+    specialists: BTreeSet<String>,
+}
+
+/// Load `name` and the transitive closure of workflows it can `run`. A `run` to
+/// a missing workflow surfaces here (as an unknown workflow) rather than
+/// mid-evaluation.
+fn load_workflow_closure(name: &str, registry: &Registry) -> Result<WorkflowClosure, String> {
+    let dir = spawningpool::store::workflows_dir();
+    let mut closure = WorkflowClosure {
+        workflows: HashMap::new(),
+        tools: BTreeSet::new(),
+        specialists: BTreeSet::new(),
+    };
+    let mut queue: VecDeque<String> = VecDeque::from([name.to_string()]);
+
+    while let Some(wf_name) = queue.pop_front() {
+        if closure.workflows.contains_key(&wf_name) {
+            continue;
+        }
+        let source = spawningpool::workflow::source(&dir, &wf_name)?;
+        let workflow = spawningpool::workflow::parse(&source)
+            .map_err(|e| format!("workflow '{wf_name}' is invalid: {e}"))?;
+        let refs = spawningpool::workflow::referenced(&workflow, registry);
+        closure.tools.extend(refs.tools);
+        closure.specialists.extend(refs.specialists);
+        for nested in refs.workflows {
+            if !closure.workflows.contains_key(&nested) {
+                queue.push_back(nested);
+            }
+        }
+        closure.workflows.insert(wf_name, workflow);
+    }
+
+    Ok(closure)
 }
 
 /// Parse repeated `KEY=VALUE` flags into a map, erroring on a token without `=`.

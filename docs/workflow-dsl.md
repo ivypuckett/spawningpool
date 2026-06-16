@@ -232,7 +232,30 @@ ask <specialist> <prompt-expr>
 `prompt-expr` evaluates to the user prompt (a string). The call's value is the
 unified envelope of §4.
 
-### 6.8 Access
+### 6.8 Workflow call
+
+```
+run <workflowname> <map-expr>
+```
+
+Invokes another workflow, supplying its declared `# inputs:` (§5.1) by name —
+the same map form a tool `call` uses. The call's value is the callee's **result
+type**, inferred recursively from its last statement (there is no `# output:`
+header on a workflow; the body is the single source of truth). Arguments flow as
+typed values, not stringified env vars: a `number` input arrives as a number, an
+object as an object.
+
+`run` is a **separate verb from `call` on purpose**. Tools live in `tools/` and
+workflows in `workflows/`, keyed by file name, so a tool and a workflow can share
+a name. The verb selects the namespace — `call deploy` is always the tool,
+`run deploy` always the workflow — so a collision is unambiguous rather than
+resolved by a hidden precedence rule.
+
+Cycles are rejected: if a `run` re-enters a workflow already on the call stack
+(`a` runs `b` runs `a`), the type-checker reports a cycle rather than looping
+forever.
+
+### 6.9 Access
 
 Access into arrays and objects uses `.`:
 
@@ -266,17 +289,12 @@ call:
 
 Pushed past v1; each has a likely direction to revisit when picked up:
 
-1. **Uniform `call`-nesting of workflows.** Workflows now run via `run --workflow`
-   (a source file in `workflows/`, named like a tool), take external inputs from
-   an `# inputs:` header (§5.1) supplied as `--arg KEY=VALUE`, and write their
-   last statement's value to `$SP_OUTPUT_PATH` — the same I/O contract a tool
-   obeys (§3). What's still deferred is letting a `call` resolve to a workflow
-   the way it resolves to a tool, so workflows nest in-language. *Likely:* the
-   `call` resolver and the `referenced` walker learn to find a workflow by name
-   and recurse (with cycle detection), reusing the input/output contract above.
-2. **Error logging / exit-code semantics for tools in a workflow.** "Errors are
+1. **Error logging / exit-code semantics for tools in a workflow.** "Errors are
    data" (§7) is the principle; how a tool's exit code and absent/garbled output
    file are recorded and surfaced is deferred.
-3. **Computed access into objects** (§6.8). A computed key into an object can hit
+2. **Computed access into objects** (§6.9). A computed key into an object can hit
    keys of differing declared types, so the result type isn't statically known.
    Deferred until there's a type story for it (e.g. an `any`/union type).
+
+*Previously deferred, now shipped:* workflow invocation and inputs (§5.1), output
+via `$SP_OUTPUT_PATH`, and in-language nesting through the `run` verb (§6.8).
