@@ -169,7 +169,15 @@ fn run_tool(terminal: &mut Tui, name: &str) -> Result<(), String> {
             Ok(run) => {
                 print!("{}", run.output);
                 if !run.success {
-                    eprintln!("\n[tool {name}] exited non-zero");
+                    let detail = match run.code {
+                        Some(code) => format!("exited with status {code}"),
+                        None => "was terminated by a signal".to_string(),
+                    };
+                    if run.output.is_empty() {
+                        eprintln!("\n[tool {name}] {detail} (no output)");
+                    } else {
+                        eprintln!("\n[tool {name}] {detail} — see its output above");
+                    }
                 }
             }
             Err(e) => eprintln!("[tool {name}] could not run: {e}"),

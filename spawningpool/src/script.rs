@@ -30,6 +30,9 @@ pub struct ScriptSummary {
 #[derive(Debug, PartialEq, Eq)]
 pub struct ScriptRun {
     pub success: bool,
+    /// The script's exit status code, or `None` when it was terminated by a
+    /// signal (so it has no code). Lets a front-end report *how* a tool failed.
+    pub code: Option<i32>,
     /// Combined stdout/stderr — ordinary logs, as today.
     pub output: String,
     /// The raw contents the script wrote to `$SP_OUTPUT_PATH` (workflow-dsl §3),
@@ -253,6 +256,7 @@ pub fn run_script(
 
     Ok(ScriptRun {
         success: output.status.success(),
+        code: output.status.code(),
         output: combined,
         structured_output,
     })
@@ -445,6 +449,7 @@ mod tests {
         std::fs::remove_file(&path).ok();
 
         assert!(!run.success);
+        assert_eq!(run.code, Some(3));
         assert!(run.output.contains("oops"));
     }
 
