@@ -1,8 +1,11 @@
 //! Tests for [`super`]. Extracted from `anthropic.rs` and included via
 //! `#[path]` so they remain a child module with access to private items.
 
+use super::request::to_wire_message;
 use super::*;
-use crate::ai::model::Api;
+use crate::ai::message::{ContentBlock, Message, Role};
+use crate::ai::model::{Api, Context, Model};
+use crate::ai::provider::{CompleteOptions, Reasoning, StreamEvent};
 
 fn model() -> Model {
     Model {
