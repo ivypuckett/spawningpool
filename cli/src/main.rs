@@ -53,6 +53,9 @@ enum Command {
     Delete {
         #[command(subcommand)]
         entity: DeleteEntity,
+        /// Skip the confirmation prompt.
+        #[arg(long, short = 'y')]
+        yes: bool,
     },
     /// Browse and manage everything in an interactive terminal UI.
     Tui,
@@ -222,7 +225,7 @@ async fn run(cli: Cli) -> Result<(), String> {
         Some(Command::List { kind }) => list(kind).await,
         Some(Command::Show { entity }) => show(entity),
         Some(Command::Define { entity }) => define(entity),
-        Some(Command::Delete { entity }) => delete(entity),
+        Some(Command::Delete { entity, yes }) => delete(entity, yes),
         Some(Command::Tui) => tui::launch().await,
     }
 }
@@ -870,63 +873,77 @@ fn define_tool(name: &str, script: &Path) -> Result<(), String> {
     Ok(())
 }
 
-fn delete(entity: DeleteEntity) -> Result<(), String> {
+fn delete(entity: DeleteEntity, yes: bool) -> Result<(), String> {
     // Tools are files in the folder, not registry entries.
     if let DeleteEntity::Tool { name } = &entity {
-        return delete_tool(name);
+        return delete_tool(name, yes);
     }
     let mut registry = spawningpool::store::load()?;
-    // Collect any entities that still reference what we're about to remove,
-    // before removing it, so we can warn about the references it leaves dangling.
-    let (removed, what, kind, name, referrers) = match entity {
+    // Look up the target and any entities that reference it *before* touching
+    // anything, so we can preview the references this delete would orphan and
+    // confirm before committing.
+    let (exists, what, kind, name, referrers) = match &entity {
         DeleteEntity::Specialist { name } => (
-            registry.specialists.remove(&name).is_some(),
+            registry.specialists.contains_key(name),
             format!("specialist {name}"),
             "specialist",
-            name,
+            name.clone(),
             Vec::new(),
         ),
-        DeleteEntity::Provider { name } => {
-            let referrers = referrers_of_provider(&registry, &name);
-            (
-                registry.providers.remove(&name).is_some(),
-                format!("provider {name}"),
-                "provider",
-                name,
-                referrers,
-            )
-        }
-        DeleteEntity::Model { name } => {
-            let referrers = referrers_of_model(&registry, &name);
-            (
-                registry.models.remove(&name).is_some(),
-                format!("model {name}"),
-                "model",
-                name,
-                referrers,
-            )
-        }
+        DeleteEntity::Provider { name } => (
+            registry.providers.contains_key(name),
+            format!("provider {name}"),
+            "provider",
+            name.clone(),
+            referrers_of_provider(&registry, name),
+        ),
+        DeleteEntity::Model { name } => (
+            registry.models.contains_key(name),
+            format!("model {name}"),
+            "model",
+            name.clone(),
+            referrers_of_model(&registry, name),
+        ),
         DeleteEntity::Tool { .. } => unreachable!("handled by delete_tool before load"),
     };
-    if !removed {
+    if !exists {
         return Err(format!("no such {what}"));
+    }
+    if !confirm_delete(&what, kind, &name, &referrers, yes)? {
+        return Ok(());
+    }
+    match entity {
+        DeleteEntity::Specialist { name } => {
+            registry.specialists.remove(&name);
+        }
+        DeleteEntity::Provider { name } => {
+            registry.providers.remove(&name);
+        }
+        DeleteEntity::Model { name } => {
+            registry.models.remove(&name);
+        }
+        DeleteEntity::Tool { .. } => unreachable!("handled by delete_tool before load"),
     }
     spawningpool::store::save(&registry)?;
     println!("deleted {what}");
-    warn_orphans(kind, &name, &referrers);
     Ok(())
 }
 
-/// Delete a tool by removing its script(s) from the folder, warning about any
-/// specialists that still reference it (those references come from the registry).
-fn delete_tool(name: &str) -> Result<(), String> {
+/// Delete a tool by removing its script(s) from the folder. Warns about — and
+/// confirms past — any specialists that still reference it (those references
+/// come from the registry).
+fn delete_tool(name: &str, yes: bool) -> Result<(), String> {
     let registry = spawningpool::store::load()?;
-    let referrers = referrers_of_tool(&registry, name);
-    if !spawningpool::tools::remove(&spawningpool::store::tools_dir(), name)? {
+    let dir = spawningpool::store::tools_dir();
+    if !spawningpool::tools::exists(&dir, name) {
         return Err(format!("no such tool {name}"));
     }
+    let referrers = referrers_of_tool(&registry, name);
+    if !confirm_delete(&format!("tool {name}"), "tool", name, &referrers, yes)? {
+        return Ok(());
+    }
+    spawningpool::tools::remove(&dir, name)?;
     println!("deleted tool {name}");
-    warn_orphans("tool", name, &referrers);
     Ok(())
 }
 
@@ -950,18 +967,52 @@ fn referrers_of_tool(registry: &Registry, name: &str) -> Vec<String> {
     format_referrers(registry.referrers(EntityKind::Tool, name))
 }
 
-/// Warn that a just-deleted entity left dangling references, naming each
-/// referrer and how they'll fail.
-fn warn_orphans(kind: &str, name: &str, referrers: &[String]) {
-    if referrers.is_empty() {
-        return;
+/// Preview the references a delete would orphan, then — unless `yes` — ask for
+/// confirmation on stdin. Returns whether the delete should proceed; a declined
+/// prompt prints `cancelled` and returns `false`.
+fn confirm_delete(
+    what: &str,
+    kind: &str,
+    name: &str,
+    referrers: &[String],
+    yes: bool,
+) -> Result<bool, String> {
+    if !referrers.is_empty() {
+        for referrer in referrers {
+            eprintln!("warning: deleting {kind} '{name}' will orphan {referrer}");
+        }
+        eprintln!(
+            "  Those references will fail at run time until you redefine {kind} '{name}' or repoint them."
+        );
     }
-    for referrer in referrers {
-        eprintln!("warning: {kind} '{name}' is still referenced by {referrer}");
+    if yes {
+        return Ok(true);
     }
-    eprintln!(
-        "  Those references will fail at run time until you redefine {kind} '{name}' or repoint them."
-    );
+    if prompt_yes_no(&format!("delete {what}?"))? {
+        Ok(true)
+    } else {
+        println!("cancelled");
+        Ok(false)
+    }
+}
+
+/// Ask a yes/no question on stdin, defaulting to no: only an explicit `y`/`yes`
+/// proceeds. EOF (a non-interactive stdin) reads as no.
+fn prompt_yes_no(question: &str) -> Result<bool, String> {
+    use std::io::Write;
+    print!("{question} [y/N] ");
+    std::io::stdout().flush().map_err(|e| e.to_string())?;
+    let mut answer = String::new();
+    std::io::stdin()
+        .read_line(&mut answer)
+        .map_err(|e| e.to_string())?;
+    Ok(affirmative(&answer))
+}
+
+/// Whether a prompt answer is an explicit yes. Anything else — including the
+/// empty string EOF yields on a non-interactive stdin — is a no.
+fn affirmative(answer: &str) -> bool {
+    matches!(answer.trim(), "y" | "Y" | "yes" | "Yes")
 }
 
 /// Split a comma-separated list flag into trimmed, non-empty names.
@@ -1133,6 +1184,17 @@ mod tests {
     }
 
     #[test]
+    fn affirmative_only_accepts_an_explicit_yes() {
+        for yes in ["y", "Y", "yes", "Yes", " yes \n"] {
+            assert!(affirmative(yes), "{yes:?} should confirm");
+        }
+        // Empty (the EOF case on a non-interactive stdin) and anything else decline.
+        for no in ["", "\n", "n", "no", "yep", "1"] {
+            assert!(!affirmative(no), "{no:?} should decline");
+        }
+    }
+
+    #[test]
     fn parse_reasoning_maps_levels_and_rejects_unknown() {
         assert_eq!(parse_reasoning("high"), Ok(Reasoning::High));
         assert_eq!(parse_reasoning("off"), Ok(Reasoning::Off));
@@ -1201,10 +1263,13 @@ mod tests {
         .unwrap_err();
         assert!(err.contains("no such"));
 
-        // Deleting it removes it.
-        delete(DeleteEntity::Provider {
-            name: "anthropic".into(),
-        })
+        // Deleting it removes it. `yes` skips the interactive confirmation.
+        delete(
+            DeleteEntity::Provider {
+                name: "anthropic".into(),
+            },
+            true,
+        )
         .unwrap();
         assert!(!spawningpool::store::load()
             .unwrap()
@@ -1212,9 +1277,12 @@ mod tests {
             .contains_key("anthropic"));
 
         // Deleting something absent is an error.
-        let err = delete(DeleteEntity::Provider {
-            name: "ghost".into(),
-        })
+        let err = delete(
+            DeleteEntity::Provider {
+                name: "ghost".into(),
+            },
+            true,
+        )
         .unwrap_err();
         assert!(err.contains("no such"));
 

@@ -13,6 +13,7 @@ treated as empty, so the first `define` creates it. See
 - [`spawningpool show`](#spawningpool-show) — print one definition
 - [`spawningpool delete`](#spawningpool-delete) — remove an entity
 - [`spawningpool run`](#spawningpool-run) — run a specialist, workflow, or tool
+- [`spawningpool tui`](#spawningpool-tui) — browse and manage everything interactively
 
 ---
 
@@ -159,6 +160,9 @@ spawningpool define tool <name> --script <path>
 spawningpool define tool ping --script ./scripts/ping.sh
 ```
 
+A tool `<name>` is at most 64 characters of ASCII letters, digits, `_`, or `-`
+(no dots or spaces), so it maps unambiguously to its script's file stem.
+
 The script is checked at define time: it must exist and be executable
 (`chmod +x`), failing here with a fix rather than mid-run. A missing `# desc:`
 header warns but succeeds. Rather than recording the tool in `registry.json`,
@@ -201,14 +205,16 @@ spawningpool show tool ping
 
 ## `spawningpool delete`
 
-Removes one entity. Deleting a provider, model, or tool that specialists still
-reference warns about each dangling reference (the delete still happens).
-Deleting a tool removes its script from the tools folder.
+Removes one entity, after asking for confirmation. Deleting a provider, model,
+or tool that specialists still reference first warns about each reference the
+delete would orphan, then prompts `delete <what>? [y/N]` — anything but `y`/`yes`
+cancels. Pass `--yes` (`-y`) to skip the prompt (the orphan warnings still
+print). Deleting a tool removes its script from the tools folder.
 
 ```sh
 spawningpool delete specialist netop
 spawningpool delete model claude-opus-4-8
-spawningpool delete provider anthropic
+spawningpool delete provider anthropic -y     # no prompt
 spawningpool delete tool ping
 ```
 
@@ -280,3 +286,30 @@ the JSON the tool writes to `$SP_OUTPUT_PATH`.
 ```sh
 spawningpool run tool ping --arg HOST=example.com --arg COUNT=3
 ```
+
+---
+
+## `spawningpool tui`
+
+Opens an interactive terminal UI over the same registry and tools folder,
+backing every `define`/`list`/`show`/`delete` with keyboard navigation.
+
+```sh
+spawningpool tui
+```
+
+The footer always shows the keys for the current mode; press `?` for the full
+list. The essentials, in normal mode:
+
+| Key | Action |
+| --- | --- |
+| `p` / `s` / `t` | switch the providers / specialists / tools tabs |
+| `h` `j` `k` `l` | navigate (drill in/out, move the selection) |
+| `a` | add an entity |
+| `o` | open (drill into a provider's models) |
+| `e` | edit the selected entity's JSON in `$EDITOR` |
+| `r` | rename |
+| `d` | delete (confirmed with `y`/`n`) |
+| `/` | filter the list |
+| `^r` | reload from disk |
+| `q` | quit |

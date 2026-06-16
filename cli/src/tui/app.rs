@@ -615,11 +615,15 @@ impl App {
                         }
                     }
                     self.registry.providers.insert(to.clone(), def);
+                    // Commit the in-memory rename only if it reached disk;
+                    // otherwise reload so memory never diverges from the file.
                     if self.persist() {
                         if self.drill.as_deref() == Some(&from) {
                             self.drill = Some(to.clone());
                         }
                         self.select_by_name(&to);
+                    } else {
+                        self.refresh();
                     }
                 }
             }
@@ -635,6 +639,8 @@ impl App {
                     self.registry.models.insert(to.clone(), def);
                     if self.persist() {
                         self.select_by_name(&to);
+                    } else {
+                        self.refresh();
                     }
                 }
             }
@@ -644,6 +650,8 @@ impl App {
                     self.registry.specialists.insert(to.clone(), def);
                     if self.persist() {
                         self.select_by_name(&to);
+                    } else {
+                        self.refresh();
                     }
                 }
             }
