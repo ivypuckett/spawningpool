@@ -138,6 +138,7 @@ fn echo_tool(name: &str, word: &str) -> (ToolDef, PathBuf) {
             ty: Type::String,
         }],
         output: None,
+        exits: vec![],
     };
     (def, path)
 }

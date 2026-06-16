@@ -17,4 +17,4 @@ pub use domain::{
     EntityKind, MissingRef, ModelDef, ProviderDef, Referrer, Registry, Specialist, ToolDef,
 };
 
-pub use types::{Param, Type};
+pub use types::{ExitCode, Param, Type};

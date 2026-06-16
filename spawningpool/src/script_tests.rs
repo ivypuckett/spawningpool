@@ -89,6 +89,64 @@ fn parse_header_defaults_when_absent_and_first_directive_wins() {
     assert_eq!(first.params, vec![param("A", Type::String)]);
 }
 
+fn exit(code: i32, name: &str, desc: Option<&str>) -> ExitCode {
+    ExitCode {
+        code,
+        name: name.to_string(),
+        desc: desc.map(str::to_string),
+    }
+}
+
+#[test]
+fn parse_header_reads_exits() {
+    let summary = parse_header(concat!(
+        "#!/bin/sh\n",
+        "# desc: Ping a host\n",
+        "# exits: 0 ok \"host reachable\", 1 unreachable \"host did not respond\", 2 badArgs\n",
+        "echo hi\n",
+    ))
+    .unwrap();
+    assert_eq!(
+        summary.exits,
+        vec![
+            exit(0, "ok", Some("host reachable")),
+            exit(1, "unreachable", Some("host did not respond")),
+            exit(2, "badArgs", None),
+        ]
+    );
+}
+
+#[test]
+fn parse_header_keeps_commas_inside_an_exit_description() {
+    let summary = parse_header("# exits: 1 failed \"down, unreachable, or slow\"\n").unwrap();
+    assert_eq!(
+        summary.exits,
+        vec![exit(1, "failed", Some("down, unreachable, or slow"))]
+    );
+}
+
+#[test]
+fn parse_header_first_exits_directive_wins() {
+    let summary = parse_header("# exits: 0 ok\n# exits: 1 nope\n").unwrap();
+    assert_eq!(summary.exits, vec![exit(0, "ok", None)]);
+}
+
+#[test]
+fn parse_header_rejects_malformed_exits() {
+    // Non-integer code.
+    assert!(parse_header("# exits: x ok\n").is_err());
+    // Missing name.
+    assert!(parse_header("# exits: 0\n").is_err());
+    // Name that isn't a valid identifier (leading digit).
+    assert!(parse_header("# exits: 0 1ok\n").is_err());
+    // Duplicate name.
+    assert!(parse_header("# exits: 0 ok, 1 ok\n").is_err());
+    // Unquoted description.
+    assert!(parse_header("# exits: 0 ok all good\n").is_err());
+    // Unterminated description.
+    assert!(parse_header("# exits: 0 ok \"all good\n").is_err());
+}
+
 fn write_script(body: &str) -> std::path::PathBuf {
     let path = std::env::temp_dir().join(format!(
         "sp_script_{}_{}.sh",
