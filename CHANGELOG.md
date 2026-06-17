@@ -30,6 +30,11 @@ itself (parser, type-checker, evaluator) is not included yet.
   workflow identifier so a later stage can branch on it. `ScriptSummary`/`ToolDef`
   carry the parsed `ExitCode`s, and `ToolDef::to_tool` appends them to the
   description the model reads so an agentic specialist can tell why a call failed.
+- **An `else` recovery block on `run tool`** (workflow-dsl §6.6/§7). A non-zero
+  exit aborts the workflow by default; an `else { name: expr, ..., _: expr }`
+  block instead recovers it into a value, keyed by the tool's `# exits:` name
+  (with `_` as the default). Each arm must produce the tool's `# output:` type,
+  and the block must cover every declared non-zero exit or supply `_`.
 
 ## [0.2.0] - 2026-06-12
 

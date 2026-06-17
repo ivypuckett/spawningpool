@@ -213,9 +213,20 @@ fn collect(expr: &Expr, registry: &Registry, refs: &mut Referenced) {
             collect(array, registry, refs);
             collect(body, registry, refs);
         }
-        Expr::RunTool { tool, args } => {
+        Expr::RunTool {
+            tool,
+            args,
+            recover,
+            recover_default,
+        } => {
             refs.tools.insert(tool.clone());
             for (_, e) in args {
+                collect(e, registry, refs);
+            }
+            for (_, e) in recover {
+                collect(e, registry, refs);
+            }
+            if let Some(e) = recover_default {
                 collect(e, registry, refs);
             }
         }

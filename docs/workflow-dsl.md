@@ -246,6 +246,28 @@ from its last statement (there is no `# output:` header on a workflow; the body
 is the single source of truth). Arguments flow as typed values, not stringified
 env vars: a `number` input arrives as a number, an object as an object.
 
+**Recovering a non-zero exit (`else`).** A `run tool` may carry an `else` block
+that turns a non-zero exit into a value instead of aborting the workflow:
+
+```
+ms = run tool ping { HOST: h } else {
+  unreachable: { "ms": 0 },
+  badArgs: { "ms": 0 },
+  _: { "ms": 0 }
+}
+```
+
+Each named arm is keyed by one of the tool's declared `# exits:` names (§3,
+`docs/tools.md`), and the `_` arm is the default — it catches any non-zero exit
+not named, including codes the tool didn't declare and termination by a signal.
+When the tool exits non-zero, the matching arm's value becomes the call's result,
+so `ms` still has the tool's `# output:` type: **every arm — and the success
+path — must produce that type.** The block must be **exhaustive**: name every
+declared non-zero exit, or supply `_`. Exit code 0 is success and is never an
+arm; an in-band failure (exit 0 carrying a `reachable: false` field) is handled
+with `if` (§7), not `else`. With no `else` block, a non-zero exit aborts the
+workflow.
+
 The **kind selects the namespace.** Tools live in `tools/` and workflows in
 `workflows/`, keyed by file name, so a tool and a workflow can share a name;
 `run tool deploy` is always the tool and `run workflow deploy` always the
@@ -280,9 +302,13 @@ Access is type-directed:
 Runtime failures are values, not aborts. The workflow does not throw on a failed
 call:
 
-- A tool encodes failure in its declared `# output:` type (e.g. a `reachable:
-  bool` field). The DSL does not branch on a tool's exit code; orchestration
-  decisions are made on the structured output.
+- A tool reports an **in-band** failure in its declared `# output:` type (e.g. a
+  `reachable: bool` field) while exiting 0; orchestration then branches on that
+  structured output with `if`.
+- A **non-zero exit** is an out-of-band failure. By default it aborts the
+  workflow, but the call can carry an `else` block (§6.6) that recovers it into a
+  value — so a declared exit code becomes data without the tool having to fold it
+  into its `# output:`.
 - A specialist's outcome (including `stopReason` and per-call `success`) is part
   of its returned envelope (§4), so callers branch on it explicitly.
 
@@ -290,12 +316,12 @@ call:
 
 Pushed past v1; each has a likely direction to revisit when picked up:
 
-1. **Error logging / exit-code semantics for tools in a workflow.** "Errors are
-   data" (§7) is the principle; how a tool's exit code and absent/garbled output
-   file are recorded and surfaced is deferred.
-2. **Computed access into objects** (§6.7). A computed key into an object can hit
+1. **Computed access into objects** (§6.7). A computed key into an object can hit
    keys of differing declared types, so the result type isn't statically known.
    Deferred until there's a type story for it (e.g. an `any`/union type).
 
 *Previously deferred, now shipped:* workflow invocation and inputs (§5.1), output
-via `$SP_OUTPUT_PATH`, and in-language nesting through the `run` verb (§6.6).
+via `$SP_OUTPUT_PATH`, in-language nesting through the `run` verb (§6.6), and
+exit-code recovery via the `else` block (§6.6/§7). A failure can be turned into a
+value at the call site, though carrying *which* failure happened further
+downstream (an exit envelope) is left for when a use case needs it.

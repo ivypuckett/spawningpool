@@ -41,8 +41,9 @@ pub struct Param {
 
 /// One entry of a tool's `# exits:` header (see `docs/tools.md`): an exit status
 /// `code`, a compilable `name`, and an optional human-readable `desc`. The
-/// `name` is a DSL identifier so a later workflow stage can branch on it (see
-/// `docs/workflow-dsl.md` §8.1); the `desc` is sugar for humans and the model.
+/// `name` is a DSL identifier so a workflow's `run tool` `else` block can branch
+/// on it (see `docs/workflow-dsl.md` §6.6); the `desc` is sugar for humans and
+/// the model.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct ExitCode {
     pub code: i32,

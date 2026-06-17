@@ -152,6 +152,8 @@ fn parses_run_tool_expression() {
         Expr::RunTool {
             tool: "get_weather".to_string(),
             args: vec![("CITY".to_string(), var("city"))],
+            recover: vec![],
+            recover_default: None,
         }
     );
 }
@@ -164,6 +166,8 @@ fn parses_run_tool_with_hyphenated_name() {
         Expr::RunTool {
             tool: "get-weather".to_string(),
             args: vec![("CITY".to_string(), var("city"))],
+            recover: vec![],
+            recover_default: None,
         }
     );
 }
@@ -219,6 +223,45 @@ fn run_verb_and_kinds_accept_aliases() {
 #[test]
 fn rejects_run_with_unknown_kind() {
     assert!(parse("x = run gadget foo {}").is_err());
+}
+
+#[test]
+fn parses_run_tool_with_else_block() {
+    let wf = parse(
+        r#"r = run tool ping { HOST: h } else { unreachable: { "ms": 0 }, _: { "ms": 10 } }"#,
+    )
+    .unwrap();
+    assert_eq!(
+        wf.statements[0].expr,
+        Expr::RunTool {
+            tool: "ping".to_string(),
+            args: vec![("HOST".to_string(), var("h"))],
+            recover: vec![(
+                "unreachable".to_string(),
+                Expr::Object(vec![("ms".to_string(), num(0.0))]),
+            )],
+            recover_default: Some(Box::new(Expr::Object(vec![("ms".to_string(), num(10.0),)]))),
+        }
+    );
+}
+
+#[test]
+fn parses_run_tool_without_else_block() {
+    let wf = parse("r = run tool ping {}").unwrap();
+    assert_eq!(
+        wf.statements[0].expr,
+        Expr::RunTool {
+            tool: "ping".to_string(),
+            args: vec![],
+            recover: vec![],
+            recover_default: None,
+        }
+    );
+}
+
+#[test]
+fn rejects_else_block_with_duplicate_default() {
+    assert!(parse("r = run tool ping {} else { _: 1, _: 2 }").is_err());
 }
 
 #[test]

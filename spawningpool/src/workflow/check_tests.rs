@@ -4,7 +4,7 @@
 use super::*;
 use crate::ai::Reasoning;
 use crate::domain::Specialist;
-use crate::types::Param;
+use crate::types::{ExitCode, Param};
 use crate::workflow::parse::parse;
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -153,6 +153,82 @@ fn rejects_run_tool_without_output_type() {
     let t = tool("ping", vec![], None);
     let wf = parse("r = run tool ping {}").unwrap();
     assert!(check(&wf, &empty_registry(), &[t], &HashMap::new()).is_err());
+}
+
+/// A `ping` tool returning `{ "ms": number }` with the given `# exits:` codes.
+fn ping_with_exits(exits: Vec<(i32, &str)>) -> ToolDef {
+    let mut t = tool(
+        "ping",
+        vec![],
+        Some(Type::Object(vec![("ms".to_string(), Type::Number)])),
+    );
+    t.exits = exits
+        .into_iter()
+        .map(|(code, name)| ExitCode {
+            code,
+            name: name.to_string(),
+            desc: None,
+        })
+        .collect();
+    t
+}
+
+#[test]
+fn accepts_exhaustive_else_block() {
+    let t = ping_with_exits(vec![(1, "unreachable"), (2, "badArgs")]);
+    let wf =
+        parse(r#"r = run tool ping {} else { unreachable: { "ms": 0 }, badArgs: { "ms": 0 } }"#)
+            .unwrap();
+    let env = check(&wf, &empty_registry(), &[t], &HashMap::new()).unwrap();
+    assert_eq!(
+        env["r"],
+        Type::Object(vec![("ms".to_string(), Type::Number)])
+    );
+}
+
+#[test]
+fn accepts_else_default_arm() {
+    let t = ping_with_exits(vec![(1, "unreachable"), (2, "badArgs")]);
+    let wf = parse(r#"r = run tool ping {} else { _: { "ms": 0 } }"#).unwrap();
+    assert!(check(&wf, &empty_registry(), &[t], &HashMap::new()).is_ok());
+}
+
+#[test]
+fn rejects_else_arm_for_unknown_exit_code() {
+    let t = ping_with_exits(vec![(1, "unreachable")]);
+    let wf = parse(r#"r = run tool ping {} else { typo: { "ms": 0 } }"#).unwrap();
+    assert!(check(&wf, &empty_registry(), &[t], &HashMap::new()).is_err());
+}
+
+#[test]
+fn rejects_non_exhaustive_else_block() {
+    let t = ping_with_exits(vec![(1, "unreachable"), (2, "badArgs")]);
+    // `badArgs` is unhandled and there's no `_` default.
+    let wf = parse(r#"r = run tool ping {} else { unreachable: { "ms": 0 } }"#).unwrap();
+    assert!(check(&wf, &empty_registry(), &[t], &HashMap::new()).is_err());
+}
+
+#[test]
+fn rejects_else_arm_with_wrong_type() {
+    let t = ping_with_exits(vec![(1, "unreachable")]);
+    let wf = parse(r#"r = run tool ping {} else { unreachable: "down" }"#).unwrap();
+    assert!(check(&wf, &empty_registry(), &[t], &HashMap::new()).is_err());
+}
+
+#[test]
+fn rejects_else_arm_for_success_code() {
+    let t = ping_with_exits(vec![(0, "ok"), (1, "unreachable")]);
+    let wf = parse(r#"r = run tool ping {} else { ok: { "ms": 0 }, unreachable: { "ms": 0 } }"#)
+        .unwrap();
+    assert!(check(&wf, &empty_registry(), &[t], &HashMap::new()).is_err());
+}
+
+#[test]
+fn tool_without_else_block_needs_no_exit_handling() {
+    // Declared exits but no `else` block — allowed (failure aborts at runtime).
+    let t = ping_with_exits(vec![(1, "unreachable")]);
+    let wf = parse("r = run tool ping {}").unwrap();
+    assert!(check(&wf, &empty_registry(), &[t], &HashMap::new()).is_ok());
 }
 
 #[test]
