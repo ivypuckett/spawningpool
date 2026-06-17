@@ -3,14 +3,18 @@
 //! A workflow is a flat sequence of `name = expr` assignments over a shared
 //! namespace of inputs and prior statement names (workflow-dsl.md §5). The
 //! diagram makes the implicit data flow explicit: one node per input and per
-//! statement, with an edge `A --> B` whenever statement `B` references variable
-//! `A`. Statement nodes are shaped by what they do — `run tool`, `run
-//! specialist`, `run workflow`, or a plain expression.
+//! statement, with an edge `A --v--> B` whenever statement `B` references the
+//! variable `v` defined by `A`.
+//!
+//! Nodes carry just a name: a `run tool`/`run specialist`/`run workflow`
+//! statement shows the name of the thing it calls; every other statement (and
+//! each input) shows its own variable name. Node shape reflects the kind —
+//! inputs are parallelograms, tool runs rectangles, specialist runs stadiums,
+//! workflow runs subroutines, and plain data declarations rounded.
 
 use std::collections::{BTreeSet, HashMap};
 
-use crate::types::Type;
-use crate::workflow::ast::{AccessKey, BinOp, Expr, Workflow};
+use crate::workflow::ast::{AccessKey, Expr, Workflow};
 
 /// Render `workflow` as Mermaid `flowchart` source.
 pub fn mermaid(workflow: &Workflow) -> String {
@@ -25,8 +29,7 @@ pub fn mermaid(workflow: &Workflow) -> String {
     for input in &workflow.inputs {
         let id = format!("n{counter}");
         counter += 1;
-        let label = format!("{}: {}", input.name, type_label(&input.ty));
-        nodes.push_str(&format!("    {id}{}\n", shape(Kind::Input, &label)));
+        nodes.push_str(&format!("    {id}{}\n", shape(Kind::Input, &input.name)));
         defs.insert(input.name.clone(), id);
     }
 
@@ -34,18 +37,18 @@ pub fn mermaid(workflow: &Workflow) -> String {
         let id = format!("n{counter}");
         counter += 1;
 
-        // Edges from the current definition of each referenced variable. Read
-        // `defs` before updating it, so a self-reference (`x = x + 1`) points at
-        // the previous `x`, not this node.
+        // Edges from the current definition of each referenced variable, each
+        // labeled with that variable. Read `defs` before updating it, so a
+        // self-reference (`x = x + 1`) points at the previous `x`, not this node.
         let mut vars = BTreeSet::new();
         free_vars(&stmt.expr, &mut vars);
         for v in &vars {
             if let Some(src) = defs.get(v) {
-                edges.push_str(&format!("    {src} --> {id}\n"));
+                edges.push_str(&format!("    {src} --{v}--> {id}\n"));
             }
         }
 
-        let label = format!("{} = {}", stmt.name, describe(&stmt.expr));
+        let label = node_label(&stmt.name, &stmt.expr);
         nodes.push_str(&format!("    {id}{}\n", shape(kind(&stmt.expr), &label)));
         defs.insert(stmt.name.clone(), id);
     }
@@ -56,10 +59,12 @@ pub fn mermaid(workflow: &Workflow) -> String {
     out
 }
 
-/// The variable names an expression reads. `for [item: array] (body)` binds
-/// `item` within `body` only (workflow-dsl.md §6.5), so it is removed from the
-/// body's free variables before merging — otherwise the loop variable would be
-/// mistaken for an outer reference and draw a phantom edge.
+/// The variable names an expression reads, each as the top-level variable —
+/// `weather.summary` contributes `weather`, not the access path. `for [item:
+/// array] (body)` binds `item` within `body` only (workflow-dsl.md §6.5), so it
+/// is removed from the body's free variables before merging — otherwise the
+/// loop variable would be mistaken for an outer reference and draw a phantom
+/// edge.
 fn free_vars(expr: &Expr, out: &mut BTreeSet<String>) {
     match expr {
         Expr::Str(_) | Expr::Num(_) | Expr::Bool(_) => {}
@@ -123,6 +128,17 @@ fn free_vars(expr: &Expr, out: &mut BTreeSet<String>) {
     }
 }
 
+/// The name a node displays: the callee for a `run` statement, otherwise the
+/// statement's own variable name.
+fn node_label(name: &str, expr: &Expr) -> String {
+    match expr {
+        Expr::RunTool { tool, .. } => tool.clone(),
+        Expr::RunSpecialist { specialist, .. } => specialist.clone(),
+        Expr::RunWorkflow { workflow, .. } => workflow.clone(),
+        _ => name.to_string(),
+    }
+}
+
 /// The shape category of a statement node, chosen by its top-level expression.
 enum Kind {
     Input,
@@ -156,49 +172,6 @@ fn shape(kind: Kind, label: &str) -> String {
 
 fn escape(s: &str) -> String {
     s.replace('"', "&quot;").replace('\n', " ")
-}
-
-/// A concise, human-readable summary of an expression for a node label. The
-/// `run` forms name their target; other forms collapse to their shape.
-fn describe(expr: &Expr) -> String {
-    match expr {
-        Expr::Str(s) => format!("\"{s}\""),
-        Expr::Num(n) => format!("{n}"),
-        Expr::Bool(b) => format!("{b}"),
-        Expr::Object(_) => "{ ... }".to_string(),
-        Expr::Var(name) => name.clone(),
-        Expr::Not(_) => "!...".to_string(),
-        Expr::BinOp { op, .. } => format!("... {} ...", bin_symbol(op)),
-        Expr::Access { .. } => "...".to_string(),
-        Expr::If { .. } => "if ...".to_string(),
-        Expr::For { item, .. } => format!("for {item} ..."),
-        Expr::RunTool { tool, .. } => format!("run tool {tool}"),
-        Expr::RunWorkflow { workflow, .. } => format!("run workflow {workflow}"),
-        Expr::RunSpecialist { specialist, .. } => format!("run specialist {specialist}"),
-    }
-}
-
-fn bin_symbol(op: &BinOp) -> &'static str {
-    match op {
-        BinOp::Add => "+",
-        BinOp::Sub => "-",
-        BinOp::Mul => "*",
-        BinOp::Div => "/",
-        BinOp::Rem => "%",
-        BinOp::Pow => "^",
-        BinOp::Or => "or",
-        BinOp::And => "and",
-    }
-}
-
-fn type_label(ty: &Type) -> String {
-    match ty {
-        Type::String => "string".to_string(),
-        Type::Number => "number".to_string(),
-        Type::Bool => "bool".to_string(),
-        Type::Array(inner) => format!("[{}]", type_label(inner)),
-        Type::Object(_) => "object".to_string(),
-    }
 }
 
 #[cfg(test)]
