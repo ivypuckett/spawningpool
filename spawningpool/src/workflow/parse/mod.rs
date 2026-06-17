@@ -23,6 +23,10 @@ use lexer::{tokenize, Token};
 
 // ── Parser ────────────────────────────────────────────────────────────────────
 
+/// A parsed `run tool` `else` block: the named recovery arms and the optional
+/// `_` default arm.
+type ElseBlock = (Vec<(String, Expr)>, Option<Box<Expr>>);
+
 struct Parser {
     tokens: Vec<Token>,
     pos: usize,
@@ -280,10 +284,16 @@ impl Parser {
         let kind = self.expect_ident()?;
         let name = self.expect_ident()?;
         match kind.as_str() {
-            "tool" => Ok(Expr::RunTool {
-                tool: name,
-                args: self.parse_named_map()?,
-            }),
+            "tool" => {
+                let args = self.parse_named_map()?;
+                let (recover, recover_default) = self.parse_else_block()?;
+                Ok(Expr::RunTool {
+                    tool: name,
+                    args,
+                    recover,
+                    recover_default,
+                })
+            }
             "workflow" | "overseer" => Ok(Expr::RunWorkflow {
                 workflow: name,
                 args: self.parse_named_map()?,
@@ -318,6 +328,46 @@ impl Parser {
         }
         self.expect_token(&Token::RBrace)?;
         Ok(args)
+    }
+
+    /// Parse an optional `else { name: expr, ..., _: expr }` recovery block on a
+    /// `run tool` (workflow-dsl.md §6.6/§7). `name`s are bare exit-code
+    /// identifiers (validated against the tool's `# exits:` at type-check time);
+    /// the `_` arm is the default. Returns the named arms and the optional
+    /// default; an absent block yields empty arms and no default.
+    fn parse_else_block(&mut self) -> Result<ElseBlock, ParseError> {
+        if self.peek_ident().as_deref() != Some("else") {
+            return Ok((Vec::new(), None));
+        }
+        self.bump(); // `else`
+        self.expect_token(&Token::LBrace)?;
+
+        let mut arms = Vec::new();
+        let mut default = None;
+        if !matches!(self.peek(), Some(Token::RBrace)) {
+            loop {
+                let key = self.expect_ident()?;
+                self.expect_token(&Token::Colon)?;
+                let val = self.parse_expr()?;
+                if key == "_" {
+                    if default.is_some() {
+                        return Err(ParseError(
+                            "duplicate `_` default arm in `else` block".to_string(),
+                        ));
+                    }
+                    default = Some(Box::new(val));
+                } else {
+                    arms.push((key, val));
+                }
+                if matches!(self.peek(), Some(Token::Comma)) {
+                    self.bump();
+                } else {
+                    break;
+                }
+            }
+        }
+        self.expect_token(&Token::RBrace)?;
+        Ok((arms, default))
     }
 
     fn parse_object_literal(&mut self) -> Result<Expr, ParseError> {

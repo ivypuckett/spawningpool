@@ -279,6 +279,90 @@ async fn run_tool_errors_when_sp_output_path_omitted() {
     assert!(err.0.contains("SP_OUTPUT_PATH"));
 }
 
+/// A `ping` tool whose script exits with `code` (writing no output), declaring
+/// `# exits:` `1 unreachable` / `2 badArgs` and output `{ "ms": number }`.
+#[cfg(test)]
+fn exiting_tool(code: i32) -> (ToolDef, std::path::PathBuf) {
+    use std::os::unix::fs::PermissionsExt;
+    let script_path = std::env::temp_dir().join(format!(
+        "sp_wf_exit_{}_{}.sh",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    std::fs::write(&script_path, format!("#!/bin/sh\nexit {code}\n")).unwrap();
+    std::fs::set_permissions(&script_path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let tool = ToolDef {
+        name: "ping".to_string(),
+        script: script_path.clone(),
+        description: String::new(),
+        params: vec![],
+        output: Some(crate::types::Type::Object(vec![(
+            "ms".to_string(),
+            crate::types::Type::Number,
+        )])),
+        exits: vec![
+            crate::types::ExitCode {
+                code: 1,
+                name: "unreachable".to_string(),
+                desc: None,
+            },
+            crate::types::ExitCode {
+                code: 2,
+                name: "badArgs".to_string(),
+                desc: None,
+            },
+        ],
+    };
+    (tool, script_path)
+}
+
+#[cfg(test)]
+async fn eval_with_tool(src: &str, tool: ToolDef) -> Result<serde_json::Value, WorkflowError> {
+    let wf = parse(src).expect("parse failed");
+    let registry = Registry::default();
+    let client = crate::ai::Client::new();
+    let keys = HashMap::new();
+    let inputs = HashMap::new();
+    let workflows = HashMap::new();
+    eval(&wf, &registry, &[tool], &client, &keys, &inputs, &workflows).await
+}
+
+#[tokio::test]
+async fn run_tool_recovers_via_named_else_arm() {
+    let (tool, script_path) = exiting_tool(1); // -> "unreachable"
+    let val = eval_with_tool(
+        r#"r = run tool ping {} else { unreachable: { "ms": 0 }, badArgs: { "ms": 1 } }"#,
+        tool,
+    )
+    .await
+    .unwrap();
+    std::fs::remove_file(&script_path).ok();
+    assert_eq!(val, serde_json::json!({ "ms": 0.0 }));
+}
+
+#[tokio::test]
+async fn run_tool_recovers_undeclared_exit_via_default_arm() {
+    let (tool, script_path) = exiting_tool(7); // not in `# exits:`
+    let val = eval_with_tool(r#"r = run tool ping {} else { _: { "ms": 99 } }"#, tool)
+        .await
+        .unwrap();
+    std::fs::remove_file(&script_path).ok();
+    assert_eq!(val, serde_json::json!({ "ms": 99.0 }));
+}
+
+#[tokio::test]
+async fn run_tool_aborts_on_unhandled_nonzero_exit() {
+    let (tool, script_path) = exiting_tool(1);
+    let err = eval_with_tool("r = run tool ping {}", tool)
+        .await
+        .unwrap_err();
+    std::fs::remove_file(&script_path).ok();
+    assert!(err.0.contains("no `else` arm handles it"));
+}
+
 /// A tiny tool that echoes `NAME` into a structured `{ "v": string }`.
 #[cfg(test)]
 fn echo_tool() -> (ToolDef, std::path::PathBuf) {

@@ -184,7 +184,12 @@ fn infer(expr: &Expr, env: &TypeEnv, ctx: &Ctx, chain: &[String]) -> Result<Type
             Ok(Type::Array(Box::new(body_ty)))
         }
 
-        Expr::RunTool { tool, args } => {
+        Expr::RunTool {
+            tool,
+            args,
+            recover,
+            recover_default,
+        } => {
             let tool_def = ctx
                 .tools
                 .iter()
@@ -217,12 +222,24 @@ fn infer(expr: &Expr, env: &TypeEnv, ctx: &Ctx, chain: &[String]) -> Result<Type
                 }
             }
 
-            tool_def.output.clone().ok_or_else(|| {
+            let output_ty = tool_def.output.clone().ok_or_else(|| {
                 TypeError(format!(
                     "tool `{tool}` doesn't declare an `# output:` type; \
                      all tools called in a workflow must declare their output type"
                 ))
-            })
+            })?;
+
+            check_recover(
+                tool_def,
+                recover,
+                recover_default,
+                &output_ty,
+                env,
+                ctx,
+                chain,
+            )?;
+
+            Ok(output_ty)
         }
 
         Expr::RunSpecialist {
@@ -292,6 +309,108 @@ fn infer(expr: &Expr, env: &TypeEnv, ctx: &Ctx, chain: &[String]) -> Result<Type
             })
         }
     }
+}
+
+/// Type-check a `run tool` `else` recovery block (workflow-dsl.md §6.6/§7).
+///
+/// When a block is present, every named arm must match a non-success `# exits:`
+/// code the tool declares, no arm may repeat, every arm's value (including the
+/// `_` default) must have the tool's `# output:` type, and the block must be
+/// exhaustive — every declared non-zero exit is covered by name, or a `_`
+/// default catches the rest. A tool with no `else` block simply aborts on
+/// failure, so nothing is checked there.
+fn check_recover(
+    tool_def: &ToolDef,
+    recover: &[(String, Expr)],
+    recover_default: &Option<Box<Expr>>,
+    output_ty: &Type,
+    env: &TypeEnv,
+    ctx: &Ctx,
+    chain: &[String],
+) -> Result<(), TypeError> {
+    let tool = &tool_def.name;
+    if recover.is_empty() && recover_default.is_none() {
+        return Ok(());
+    }
+
+    let mut seen: Vec<&str> = Vec::new();
+    for (name, arm) in recover {
+        if seen.contains(&name.as_str()) {
+            return Err(TypeError(format!(
+                "tool `{tool}` has a duplicate `else` arm `{name}`"
+            )));
+        }
+        seen.push(name);
+
+        match tool_def.exits.iter().find(|e| e.name == *name) {
+            None => {
+                return Err(TypeError(format!(
+                    "tool `{tool}` declares no exit code named `{name}`"
+                )))
+            }
+            Some(exit) if exit.code == 0 => {
+                return Err(TypeError(format!(
+                    "exit code `{name}` of tool `{tool}` is a success code (0); \
+                     `else` arms handle failures"
+                )))
+            }
+            Some(_) => {}
+        }
+
+        check_recover_arm_type(
+            tool,
+            &format!("arm `{name}`"),
+            arm,
+            output_ty,
+            env,
+            ctx,
+            chain,
+        )?;
+    }
+
+    if let Some(default) = recover_default {
+        check_recover_arm_type(tool, "`_` default", default, output_ty, env, ctx, chain)?;
+    }
+
+    // Exhaustiveness: without a `_` default, every non-zero declared exit must
+    // have its own arm.
+    if recover_default.is_none() {
+        let missing: Vec<&str> = tool_def
+            .exits
+            .iter()
+            .filter(|e| e.code != 0 && !seen.contains(&e.name.as_str()))
+            .map(|e| e.name.as_str())
+            .collect();
+        if !missing.is_empty() {
+            return Err(TypeError(format!(
+                "tool `{tool}` `else` block doesn't handle exit code(s) {}; \
+                 add an arm for each or a `_` default",
+                missing.join(", ")
+            )));
+        }
+    }
+
+    Ok(())
+}
+
+/// One `else` arm's value must have the tool's `# output:` type.
+fn check_recover_arm_type(
+    tool: &str,
+    label: &str,
+    arm: &Expr,
+    output_ty: &Type,
+    env: &TypeEnv,
+    ctx: &Ctx,
+    chain: &[String],
+) -> Result<(), TypeError> {
+    let arm_ty = infer(arm, env, ctx, chain)?;
+    if arm_ty != *output_ty {
+        return Err(TypeError(format!(
+            "tool `{tool}` `else` {label} has type `{arm_ty}`, \
+             but the tool's output type is `{output_ty}`"
+        )));
+    }
+    Ok(())
 }
 
 fn infer_binop(op: &BinOp, l: Type, r: Type) -> Result<Type, TypeError> {

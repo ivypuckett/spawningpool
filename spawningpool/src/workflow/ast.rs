@@ -66,10 +66,19 @@ pub enum Expr {
         array: Box<Expr>,
         body: Box<Expr>,
     },
-    /// Tool run `run tool <name> { KEY: expr, ... }` (workflow-dsl.md §6.6).
+    /// Tool run `run tool <name> { KEY: expr, ... }` (workflow-dsl.md §6.6),
+    /// with an optional `else` recovery block (§7).
     RunTool {
         tool: String,
         args: Vec<(String, Expr)>,
+        /// `else` recovery arms keyed by the tool's `# exits:` name: on a
+        /// matching non-zero exit, the arm's value substitutes for the tool's
+        /// output. Empty when there's no `else` block.
+        recover: Vec<(String, Expr)>,
+        /// The `else { ..., _: expr }` default arm, catching any non-zero exit
+        /// not named in `recover` (including undeclared codes and signals).
+        /// `None` when absent.
+        recover_default: Option<Box<Expr>>,
     },
     /// Workflow run `run workflow <name> { KEY: expr, ... }` (workflow-dsl.md
     /// §6.6). Supplies the callee's declared `# inputs:` by name and yields the

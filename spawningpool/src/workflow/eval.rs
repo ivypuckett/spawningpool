@@ -176,7 +176,12 @@ fn eval_expr<'ctx>(
                 Ok(serde_json::Value::Array(results))
             }
 
-            Expr::RunTool { tool, args } => {
+            Expr::RunTool {
+                tool,
+                args,
+                recover,
+                recover_default,
+            } => {
                 let tool_def = ctx
                     .tools
                     .iter()
@@ -195,6 +200,29 @@ fn eval_expr<'ctx>(
 
                 let run = crate::run_script(&tool_def.script, &vars)
                     .map_err(|e| WorkflowError(format!("failed to run tool `{tool}`: {e}")))?;
+
+                // A non-zero exit (workflow-dsl.md §7) is recovered by the `else`
+                // block: map the code to its declared name and take that arm,
+                // falling back to the `_` default. With no matching arm the
+                // failure aborts the workflow.
+                if !run.success {
+                    let arm = run
+                        .code
+                        .and_then(|code| tool_def.exits.iter().find(|e| e.code == code))
+                        .and_then(|exit| recover.iter().find(|(name, _)| *name == exit.name))
+                        .map(|(_, arm)| arm)
+                        .or(recover_default.as_deref());
+                    return match arm {
+                        Some(arm) => eval_expr(arm, env, ctx, visited.clone()).await,
+                        None => Err(WorkflowError(format!(
+                            "tool `{tool}` exited with {} and no `else` arm handles it",
+                            match run.code {
+                                Some(code) => format!("code {code}"),
+                                None => "a signal".to_string(),
+                            }
+                        ))),
+                    };
+                }
 
                 let output_str = run.structured_output.ok_or_else(|| {
                     WorkflowError(format!(
