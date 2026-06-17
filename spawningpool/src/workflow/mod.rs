@@ -47,6 +47,7 @@ pub mod check;
 mod collector;
 pub mod eval;
 pub mod parse;
+pub mod render;
 
 use std::collections::{BTreeSet, HashMap};
 use std::path::Path;
@@ -58,6 +59,7 @@ pub use ast::{AccessKey, BinOp, Expr, Statement, Workflow};
 pub use check::{check, specialist_return_type, TypeEnv, TypeError};
 pub use eval::{eval, WorkflowError};
 pub use parse::{parse, ParseError};
+pub use render::mermaid;
 
 /// Read the DSL source of the workflow named `name` from `dir`.
 ///
