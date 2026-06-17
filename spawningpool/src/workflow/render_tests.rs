@@ -66,3 +66,13 @@ fn mermaid_shapes_a_tool_run() {
     let out = mermaid(&wf);
     assert!(out.contains("[\"w = run tool t\"]"), "{out}");
 }
+
+#[test]
+fn mermaid_shapes_a_workflow_run() {
+    let wf = parse("env = \"prod\"\n\nr = run workflow deploy { ENV: env }").unwrap();
+    let out = mermaid(&wf);
+    // A `run workflow` node uses the subroutine shape `[["..."]]`.
+    assert!(out.contains("[[\"r = run workflow deploy\"]]"), "{out}");
+    // The arg passes `env` in, so its node feeds the workflow run.
+    assert!(out.contains("n0 --> n1"), "{out}");
+}
