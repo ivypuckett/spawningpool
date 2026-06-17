@@ -15,6 +15,15 @@ pub(crate) enum OutputFormat {
     Plaintext,
 }
 
+/// How `show workflow` renders a workflow.
+#[derive(clap::ValueEnum, Clone)]
+pub(crate) enum WorkflowFormat {
+    /// The workflow's DSL source, verbatim.
+    Source,
+    /// A Mermaid `flowchart` of the workflow's data flow.
+    Mermaid,
+}
+
 #[derive(Subcommand)]
 pub(crate) enum Command {
     /// Run a specialist, workflow, or tool.
@@ -113,6 +122,15 @@ pub(crate) enum ShowEntity {
     },
     Tool {
         name: String,
+    },
+    /// Show a workflow from the `workflows/` folder, by name.
+    #[command(alias = "overseer")]
+    Workflow {
+        name: String,
+        /// Output format. Defaults to `source` (the DSL verbatim); use `mermaid`
+        /// for a `flowchart` of the workflow's data flow.
+        #[arg(long, value_name = "FORMAT", default_value = "source")]
+        format: WorkflowFormat,
     },
 }
 
