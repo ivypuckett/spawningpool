@@ -59,7 +59,7 @@ pub fn workflows_dir() -> PathBuf {
 
 /// The directory holding conversation run records: a `runs/` folder alongside
 /// the registry file. A human-in-the-loop front-end persists each run's carried
-/// conversation window here, keyed by run id, so a `converse` loop survives
+/// conversation window here, keyed by run id, so a `chat` loop survives
 /// across turns (and process restarts). Like tools and workflows, runs aren't
 /// stored in `registry.json`.
 pub fn runs_dir() -> PathBuf {

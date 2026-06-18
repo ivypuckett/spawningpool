@@ -38,14 +38,14 @@ itself (parser, type-checker, evaluator) is not included yet.
 - **Equality operators `==` and `!=`** (workflow-dsl §6.3). Both operands must
   share a scalar type (`string`/`number`/`bool`) and the result is a `bool`, so
   an `if` can dispatch on a value — e.g. `if (mode == "discuss") ...`.
-- **A `converse` runner for human-in-the-loop conversations**
-  ([docs/human-in-the-loop.md](docs/human-in-the-loop.md)). `spawningpool
-  converse <workflow>` drives a turn-taking loop around a one-turn workflow,
-  picking `discuss`/`summarize`/`continue` each turn. The runner owns the loop,
-  the carried conversation window (persisted per run under `runs/`, resumable
-  with `--resume`), and the `continue` exit; the workflow stays a pure function
-  of its `MODE`/`MESSAGE`/`WINDOW` inputs. An example workflow ships in
-  [examples/workflows/converse.spool](examples/workflows/converse.spool).
+- **A `chat` runner for human-in-the-loop conversations**
+  ([docs/human-in-the-loop.md](docs/human-in-the-loop.md)). `spawningpool chat
+  <workflow>` drives a turn-taking loop around a one-turn workflow, picking
+  `discuss`/`summarize`/`continue` each turn. The runner owns the loop, the
+  carried conversation window (persisted per run under `runs/`, resumable with
+  `--resume`), and the `continue` exit; the workflow stays a pure function of
+  its `MODE`/`MESSAGE`/`WINDOW` inputs. An example workflow ships in
+  [examples/workflows/conversation.spool](examples/workflows/conversation.spool).
 
 ## [0.2.0] - 2026-06-12
 

@@ -58,7 +58,7 @@ pub(crate) enum Command {
     /// Hold a human-in-the-loop conversation over a one-turn workflow, picking
     /// `discuss`/`summarize`/`continue` each turn. The runner owns the loop and
     /// the carried conversation window; see `docs/human-in-the-loop.md`.
-    Converse {
+    Chat {
         /// The one-turn workflow to drive, from the `workflows/` folder.
         name: String,
         /// Resume an existing run by id, continuing its conversation window.

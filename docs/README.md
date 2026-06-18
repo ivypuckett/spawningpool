@@ -9,7 +9,7 @@ whole interface.
 - **[CLI reference](cli.md)** — every command and flag, with copyable examples.
 - **[Writing tools](tools.md)** — turn a script into a tool a specialist can call.
 - **[Workflow DSL](workflow-dsl.md)** — orchestrate tools and specialists with typed data flow.
-- **[Human in the loop](human-in-the-loop.md)** — multi-turn `converse` conversations over a workflow.
+- **[Human in the loop](human-in-the-loop.md)** — multi-turn `chat` conversations over a workflow.
 - **[Configuration](configuration.md)** — registry location, API keys, env vars.
 
 ## The model

@@ -1,4 +1,4 @@
-//! The `converse` runner: a human-in-the-loop loop around a one-turn workflow.
+//! The `chat` runner: a human-in-the-loop loop around a one-turn workflow.
 //!
 //! The DSL has no loop or "wait for input" construct, and deliberately so — a
 //! workflow is a straight-line pass that runs to completion (workflow-dsl.md
@@ -22,7 +22,7 @@
 //!
 //! `continue` never reaches the workflow: it's the runner deciding to stop
 //! looping, which is exactly "continue exits turn-taking". See
-//! `docs/human-in-the-loop.md` and the example `converse` workflow.
+//! `docs/human-in-the-loop.md` and the example `conversation` workflow.
 
 use std::collections::HashMap;
 use std::io::Write;
@@ -95,7 +95,7 @@ impl Run {
 
 /// Drive a human-in-the-loop conversation over the one-turn workflow `name`.
 /// With `resume`, continue an existing run's window instead of starting fresh.
-pub(crate) async fn converse(name: &str, resume: Option<String>) -> Result<(), String> {
+pub(crate) async fn chat(name: &str, resume: Option<String>) -> Result<(), String> {
     let registry = spawningpool::store::load()?;
 
     // Load the workflow and its `run` closure, resolve its tools, and type-check
@@ -187,7 +187,7 @@ pub(crate) async fn converse(name: &str, resume: Option<String>) -> Result<(), S
 
     run.save()?;
     println!("\nConversation saved as run '{}'. Resume with:", run.id);
-    println!("  spawningpool converse {name} --resume {}", run.id);
+    println!("  spawningpool chat {name} --resume {}", run.id);
     Ok(())
 }
 
@@ -203,13 +203,13 @@ fn check_contract(workflow: &spawningpool::workflow::Workflow) -> Result<(), Str
             Some(p) if p.ty == Type::String => {}
             Some(p) => {
                 return Err(format!(
-                    "converse workflow input `{name}` must be `string`, found `{}`",
+                    "chat workflow input `{name}` must be `string`, found `{}`",
                     p.ty
                 ))
             }
             None => {
                 return Err(format!(
-                    "converse workflow must declare a `string` input `{name}` \
+                    "chat workflow must declare a `string` input `{name}` \
                      (the contract is `# inputs: MODE:string, MESSAGE:string, WINDOW:string`)"
                 ))
             }
@@ -218,7 +218,7 @@ fn check_contract(workflow: &spawningpool::workflow::Workflow) -> Result<(), Str
     for param in &workflow.inputs {
         if !required.contains(&param.name.as_str()) {
             return Err(format!(
-                "converse workflow declares unsupported input `{}`; \
+                "chat workflow declares unsupported input `{}`; \
                  the runner only supplies MODE, MESSAGE, and WINDOW",
                 param.name
             ));

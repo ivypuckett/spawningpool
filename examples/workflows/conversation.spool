@@ -1,17 +1,17 @@
 # A single turn of a 3-mode human-in-the-loop conversation, driven by
-# `spawningpool converse converse`. The runner owns the loop and threads the
+# `spawningpool chat conversation`. The runner owns the loop and threads the
 # conversation window between turns, so this workflow is a pure function of
 # (MODE, MESSAGE, WINDOW) — sequence + selection, no loop construct needed.
 #
 # It references two ordinary specialists you define in your registry:
-#   chat       — your conversational specialist
+#   assistant  — your conversational specialist
 #   summarizer — condenses a transcript into a cohesive, self-contained window
 #
 # inputs: MODE:string, MESSAGE:string, WINDOW:string
 
 prompt = WINDOW + "\n\nUser: " + MESSAGE
 
-turn = if (MODE == "discuss") (run specialist chat prompt),
+turn = if (MODE == "discuss") (run specialist assistant prompt),
        (_)                    (run specialist summarizer WINDOW)
 
 result = if (MODE == "discuss")

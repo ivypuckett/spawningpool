@@ -1,9 +1,9 @@
-# Human in the loop (`converse`)
+# Human in the loop (`chat`)
 
 A workflow is a straight-line pass that runs start to finish (see
 [workflow-dsl.md](workflow-dsl.md) §5) — it has no loop and no "wait for input"
 construct, on purpose. Turn-taking with a human lives **outside** the DSL, in
-the `converse` runner. The runner owns three things the language deliberately
+the `chat` runner. The runner owns three things the language deliberately
 doesn't:
 
 1. the **loop** (keep taking turns),
@@ -43,14 +43,14 @@ and the workflow must return an object with two `string` fields:
 
 ## The one-turn workflow
 
-This is [`examples/workflows/converse.spool`](../examples/workflows/converse.spool):
+This is [`examples/workflows/conversation.spool`](../examples/workflows/conversation.spool):
 
 ```
 # inputs: MODE:string, MESSAGE:string, WINDOW:string
 
 prompt = WINDOW + "\n\nUser: " + MESSAGE
 
-turn = if (MODE == "discuss") (run specialist chat prompt),
+turn = if (MODE == "discuss") (run specialist assistant prompt),
        (_)                    (run specialist summarizer WINDOW)
 
 result = if (MODE == "discuss")
@@ -65,8 +65,8 @@ Why it's 0-waste:
 
 - `prompt` is pure string work — cheap, fine to run every turn.
 - `turn` is the **only** model call. Because `if` evaluates only the taken
-  branch, exactly one of `chat`/`summarizer` runs per turn — never both — and
-  its result is bound **once**.
+  branch, exactly one of `assistant`/`summarizer` runs per turn — never both —
+  and its result is bound **once**.
 - `result` reuses that single `turn` binding to format the output, with a second
   `if` that does no model calls. This sidesteps the "no per-branch binding" v1
   limitation (workflow-dsl.md §6.4): the expensive call is hoisted to its own
@@ -81,14 +81,14 @@ equality operator (workflow-dsl.md §6.3).
 
    ```sh
    mkdir -p ~/.spawningpool/workflows
-   cp examples/workflows/converse.spool ~/.spawningpool/workflows/
+   cp examples/workflows/conversation.spool ~/.spawningpool/workflows/
    ```
 
 2. Define the two specialists it calls (a conversational one and a summarizing
    one), e.g.:
 
    ```sh
-   spawningpool define specialist chat \
+   spawningpool define specialist assistant \
      --provider <p> --model <m> \
      --system-prompt "You are a helpful conversational assistant."
 
@@ -98,10 +98,10 @@ equality operator (workflow-dsl.md §6.3).
    summary, then state the open threads."
    ```
 
-3. Converse:
+3. Chat:
 
    ```sh
-   spawningpool converse converse
+   spawningpool chat conversation
    ```
 
    ```
@@ -121,7 +121,7 @@ equality operator (workflow-dsl.md §6.3).
    mode [d/s/c] ▸ c
 
    Conversation saved as run '1718700000-12345'. Resume with:
-     spawningpool converse converse --resume 1718700000-12345
+     spawningpool chat conversation --resume 1718700000-12345
    ```
 
 The window is saved after every turn under `~/.spawningpool/runs/<id>.json`, so

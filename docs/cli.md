@@ -309,7 +309,7 @@ spawningpool run tool ping --arg HOST=example.com --arg COUNT=3
 
 ---
 
-## `spawningpool converse`
+## `spawningpool chat`
 
 Holds a human-in-the-loop, multi-turn conversation over a **one-turn** workflow
 from the `workflows/` folder. Each turn you pick a mode — `discuss` (d),
@@ -319,8 +319,8 @@ threading a conversation window between turns. The window is persisted under
 up where it left off. `continue` ends turn-taking.
 
 ```sh
-spawningpool converse converse              # start a new conversation
-spawningpool converse converse --resume 1718700000-12345   # resume a saved run
+spawningpool chat conversation              # start a new conversation
+spawningpool chat conversation --resume 1718700000-12345   # resume a saved run
 ```
 
 The workflow must declare `MODE:string, MESSAGE:string, WINDOW:string` inputs
