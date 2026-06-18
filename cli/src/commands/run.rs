@@ -191,16 +191,19 @@ pub(crate) async fn run_workflow(name: &str, args: &[String]) -> Result<(), Stri
 /// A root workflow and everything reachable from it through `run`: the name→AST
 /// map (always including the root), and the union of tool and specialist names
 /// referenced anywhere in the closure.
-struct WorkflowClosure {
-    workflows: HashMap<String, spawningpool::workflow::Workflow>,
-    tools: BTreeSet<String>,
-    specialists: BTreeSet<String>,
+pub(crate) struct WorkflowClosure {
+    pub(crate) workflows: HashMap<String, spawningpool::workflow::Workflow>,
+    pub(crate) tools: BTreeSet<String>,
+    pub(crate) specialists: BTreeSet<String>,
 }
 
 /// Load `name` and the transitive closure of workflows it can `run`. A `run` to
 /// a missing workflow surfaces here (as an unknown workflow) rather than
 /// mid-evaluation.
-fn load_workflow_closure(name: &str, registry: &Registry) -> Result<WorkflowClosure, String> {
+pub(crate) fn load_workflow_closure(
+    name: &str,
+    registry: &Registry,
+) -> Result<WorkflowClosure, String> {
     let dir = spawningpool::store::workflows_dir();
     let mut closure = WorkflowClosure {
         workflows: HashMap::new(),
@@ -245,7 +248,7 @@ fn parse_kv_args(args: &[String]) -> Result<HashMap<String, String>, String> {
 /// Map each provider to its API key, read from the provider's configured
 /// `api_key_env`. A provider with no key env, or whose env isn't set, is simply
 /// omitted; specialists on it run without a key (matching `run specialist`).
-fn provider_keys(registry: &Registry) -> HashMap<String, String> {
+pub(crate) fn provider_keys(registry: &Registry) -> HashMap<String, String> {
     let mut keys = HashMap::new();
     for provider in registry.providers.values() {
         if let Some(env) = provider.api_key_env.as_ref() {
@@ -260,7 +263,7 @@ fn provider_keys(registry: &Registry) -> HashMap<String, String> {
 /// Warn on stderr about each provider a workflow's specialists need but whose API
 /// key isn't set, so a missing key surfaces before the run rather than as an auth
 /// failure mid-workflow. Mirrors the bare-`spawningpool` key warning.
-fn warn_unset_keys(
+pub(crate) fn warn_unset_keys(
     specialists: &std::collections::BTreeSet<String>,
     registry: &Registry,
     keys: &HashMap<String, String>,

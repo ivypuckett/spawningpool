@@ -35,6 +35,17 @@ itself (parser, type-checker, evaluator) is not included yet.
   block instead recovers it into a value, keyed by the tool's `# exits:` name
   (with `_` as the default). Each arm must produce the tool's `# output:` type,
   and the block must cover every declared non-zero exit or supply `_`.
+- **Equality operators `==` and `!=`** (workflow-dsl §6.3). Both operands must
+  share a scalar type (`string`/`number`/`bool`) and the result is a `bool`, so
+  an `if` can dispatch on a value — e.g. `if (mode == "discuss") ...`.
+- **A `converse` runner for human-in-the-loop conversations**
+  ([docs/human-in-the-loop.md](docs/human-in-the-loop.md)). `spawningpool
+  converse <workflow>` drives a turn-taking loop around a one-turn workflow,
+  picking `discuss`/`summarize`/`continue` each turn. The runner owns the loop,
+  the carried conversation window (persisted per run under `runs/`, resumable
+  with `--resume`), and the `continue` exit; the workflow stays a pure function
+  of its `MODE`/`MESSAGE`/`WINDOW` inputs. An example workflow ships in
+  [examples/workflows/converse.spool](examples/workflows/converse.spool).
 
 ## [0.2.0] - 2026-06-12
 

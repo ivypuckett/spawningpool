@@ -184,6 +184,11 @@ introduces a local binding; see §6.5.)
 
 - Logical: `||`, `&&`, `!` — operands must be `bool`. There is **no
   truthiness**: non-`bool` values are not coerced, they're a type error.
+- Equality: `==`, `!=` — both operands must share a **scalar** type (`string`,
+  `number`, or `bool`); comparing different types, arrays, or objects is a type
+  error. Yields a `bool`. The common use is dispatching an `if` on a string,
+  e.g. `if (mode == "discuss") ...` (see
+  [human-in-the-loop.md](human-in-the-loop.md)).
 - Arithmetic: `+`, `-`, `*`, `/`, `%`, `^` (where `^` is power)
 - **No operator precedence.** Evaluation is strictly left-to-right; use
   parentheses to group. So `(1 + 2 - 3 / 4 % 5 ^ 6)` evaluates left to right.

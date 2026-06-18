@@ -444,6 +444,10 @@ fn eval_binop(
             let rn = num_val(&r, "^")?;
             Ok(serde_json::json!(ln.powf(rn)))
         }
+        // The checker guarantees both sides share a scalar type, so a direct
+        // value comparison is exactly the declared semantics.
+        BinOp::Eq => Ok(serde_json::Value::Bool(l == r)),
+        BinOp::Neq => Ok(serde_json::Value::Bool(l != r)),
     }
 }
 

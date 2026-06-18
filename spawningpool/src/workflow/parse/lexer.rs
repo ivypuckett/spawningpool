@@ -9,6 +9,8 @@ pub(super) enum Token {
     Str(String),
     Num(f64),
     Eq,
+    EqEq,
+    BangEq,
     LParen,
     RParen,
     LBrace,
@@ -44,8 +46,13 @@ pub(super) fn tokenize(source: &str) -> Result<Vec<Token>, ParseError> {
 
         match c {
             '=' => {
-                tokens.push(Token::Eq);
-                i += 1;
+                if chars.get(i + 1) == Some(&'=') {
+                    tokens.push(Token::EqEq);
+                    i += 2;
+                } else {
+                    tokens.push(Token::Eq);
+                    i += 1;
+                }
             }
             '(' => {
                 tokens.push(Token::LParen);
@@ -108,8 +115,13 @@ pub(super) fn tokenize(source: &str) -> Result<Vec<Token>, ParseError> {
                 i += 1;
             }
             '!' => {
-                tokens.push(Token::Bang);
-                i += 1;
+                if chars.get(i + 1) == Some(&'=') {
+                    tokens.push(Token::BangEq);
+                    i += 2;
+                } else {
+                    tokens.push(Token::Bang);
+                    i += 1;
+                }
             }
             '|' => {
                 if chars.get(i + 1) == Some(&'|') {

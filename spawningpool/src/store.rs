@@ -57,6 +57,18 @@ pub fn workflows_dir() -> PathBuf {
     }
 }
 
+/// The directory holding conversation run records: a `runs/` folder alongside
+/// the registry file. A human-in-the-loop front-end persists each run's carried
+/// conversation window here, keyed by run id, so a `converse` loop survives
+/// across turns (and process restarts). Like tools and workflows, runs aren't
+/// stored in `registry.json`.
+pub fn runs_dir() -> PathBuf {
+    match registry_path().parent() {
+        Some(parent) if !parent.as_os_str().is_empty() => parent.join("runs"),
+        _ => PathBuf::from("runs"),
+    }
+}
+
 /// Every non-directory entry in `dir` whose file name, minus a single extension,
 /// equals `name`. A missing directory yields an empty list. Shared by the tool
 /// and workflow folders, which both name their files by stem (so `deploy.spool`

@@ -68,6 +68,39 @@ fn parses_binary_ops_left_to_right() {
 }
 
 #[test]
+fn parses_equality_operators() {
+    let eq = parse(r#"x = mode == "discuss""#).unwrap();
+    assert_eq!(
+        eq.statements[0].expr,
+        Expr::BinOp {
+            op: BinOp::Eq,
+            lhs: Box::new(var("mode")),
+            rhs: Box::new(str("discuss")),
+        }
+    );
+    let neq = parse("y = a != b").unwrap();
+    assert_eq!(
+        neq.statements[0].expr,
+        Expr::BinOp {
+            op: BinOp::Neq,
+            lhs: Box::new(var("a")),
+            rhs: Box::new(var("b")),
+        }
+    );
+}
+
+#[test]
+fn single_equals_is_still_assignment() {
+    // `==` must not swallow the assignment `=`.
+    let wf = parse("x = a == b").unwrap();
+    assert_eq!(wf.statements[0].name, "x");
+    assert!(matches!(
+        wf.statements[0].expr,
+        Expr::BinOp { op: BinOp::Eq, .. }
+    ));
+}
+
+#[test]
 fn parses_not_expr() {
     let wf = parse("x = !true").unwrap();
     assert_eq!(wf.statements[0].expr, Expr::Not(Box::new(Expr::Bool(true))));

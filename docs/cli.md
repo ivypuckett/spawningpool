@@ -309,6 +309,26 @@ spawningpool run tool ping --arg HOST=example.com --arg COUNT=3
 
 ---
 
+## `spawningpool converse`
+
+Holds a human-in-the-loop, multi-turn conversation over a **one-turn** workflow
+from the `workflows/` folder. Each turn you pick a mode — `discuss` (d),
+`summarize` (s), or `continue` (c) — and the runner re-invokes the workflow,
+threading a conversation window between turns. The window is persisted under
+`runs/<id>.json` after every turn, so `--resume <id>` picks a conversation back
+up where it left off. `continue` ends turn-taking.
+
+```sh
+spawningpool converse converse              # start a new conversation
+spawningpool converse converse --resume 1718700000-12345   # resume a saved run
+```
+
+The workflow must declare `MODE:string, MESSAGE:string, WINDOW:string` inputs
+and return `{ window, reply }`. See
+[Human in the loop](human-in-the-loop.md) for the full contract and an example.
+
+---
+
 ## `spawningpool tui`
 
 Opens an interactive terminal UI over the same registry and tools folder,

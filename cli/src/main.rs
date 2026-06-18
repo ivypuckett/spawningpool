@@ -35,6 +35,9 @@ async fn run(cli: Cli) -> Result<(), String> {
         Some(Command::Show { entity }) => commands::show::show(entity),
         Some(Command::Define { entity }) => commands::define::define(entity),
         Some(Command::Delete { entity, yes }) => commands::delete::delete(entity, yes),
+        Some(Command::Converse { name, resume }) => {
+            commands::converse::converse(&name, resume).await
+        }
         Some(Command::Tui) => tui::launch().await,
     }
 }

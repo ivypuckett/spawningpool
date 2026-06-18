@@ -55,6 +55,16 @@ pub(crate) enum Command {
         #[arg(long, short = 'y')]
         yes: bool,
     },
+    /// Hold a human-in-the-loop conversation over a one-turn workflow, picking
+    /// `discuss`/`summarize`/`continue` each turn. The runner owns the loop and
+    /// the carried conversation window; see `docs/human-in-the-loop.md`.
+    Converse {
+        /// The one-turn workflow to drive, from the `workflows/` folder.
+        name: String,
+        /// Resume an existing run by id, continuing its conversation window.
+        #[arg(long, value_name = "RUN_ID")]
+        resume: Option<String>,
+    },
     /// Browse and manage everything in an interactive terminal UI.
     Tui,
 }

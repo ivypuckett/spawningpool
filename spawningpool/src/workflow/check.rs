@@ -423,6 +423,20 @@ fn infer_binop(op: &BinOp, l: Type, r: Type) -> Result<Type, TypeError> {
             }
             Ok(Type::Bool)
         }
+        BinOp::Eq | BinOp::Neq => {
+            let sym = if matches!(op, BinOp::Eq) { "==" } else { "!=" };
+            if l != r {
+                return Err(TypeError(format!(
+                    "operator `{sym}` requires operands of the same type, found `{l}` and `{r}`"
+                )));
+            }
+            match l {
+                Type::String | Type::Number | Type::Bool => Ok(Type::Bool),
+                other => Err(TypeError(format!(
+                    "operator `{sym}` compares strings, numbers, or bools, found `{other}`"
+                ))),
+            }
+        }
         BinOp::Add => {
             if l == Type::String && r == Type::String {
                 Ok(Type::String)

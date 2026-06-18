@@ -75,6 +75,42 @@ async fn evaluates_logical_ops() {
 }
 
 #[tokio::test]
+async fn evaluates_equality() {
+    assert_eq!(
+        eval_src(r#"x = "discuss" == "discuss""#).await.unwrap(),
+        serde_json::json!(true)
+    );
+    assert_eq!(
+        eval_src(r#"x = "discuss" == "summarize""#).await.unwrap(),
+        serde_json::json!(false)
+    );
+    assert_eq!(
+        eval_src("x = 1 != 2").await.unwrap(),
+        serde_json::json!(true)
+    );
+    assert_eq!(
+        eval_src("x = 3 == 3").await.unwrap(),
+        serde_json::json!(true)
+    );
+}
+
+#[tokio::test]
+async fn equality_selects_an_if_branch() {
+    let wf = parse("# inputs: MODE:string\n\nx = if (MODE == \"discuss\") \"chat\", (_) \"sum\"")
+        .unwrap();
+    let registry = Registry::default();
+    let client = crate::ai::Client::new();
+    let keys = HashMap::new();
+    let workflows = HashMap::new();
+    let mut inputs = HashMap::new();
+    inputs.insert("MODE".to_string(), serde_json::json!("discuss"));
+    let v = eval(&wf, &registry, &[], &client, &keys, &inputs, &workflows)
+        .await
+        .unwrap();
+    assert_eq!(v, serde_json::json!("chat"));
+}
+
+#[tokio::test]
 async fn evaluates_not() {
     let v = eval_src("x = !true").await.unwrap();
     assert_eq!(v, serde_json::json!(false));

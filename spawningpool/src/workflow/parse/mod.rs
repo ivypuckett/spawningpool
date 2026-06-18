@@ -109,6 +109,8 @@ impl Parser {
                 Some(Token::Caret) => BinOp::Pow,
                 Some(Token::PipePipe) => BinOp::Or,
                 Some(Token::AmpAmp) => BinOp::And,
+                Some(Token::EqEq) => BinOp::Eq,
+                Some(Token::BangEq) => BinOp::Neq,
                 _ => break,
             };
             self.bump();

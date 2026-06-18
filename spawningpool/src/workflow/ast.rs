@@ -14,6 +14,10 @@ pub enum BinOp {
     Pow,
     Or,
     And,
+    /// Equality `==`. Operands must share a scalar type; yields `bool`.
+    Eq,
+    /// Inequality `!=`. Operands must share a scalar type; yields `bool`.
+    Neq,
 }
 
 /// Access key used in a member-access chain (workflow-dsl.md §6.7).

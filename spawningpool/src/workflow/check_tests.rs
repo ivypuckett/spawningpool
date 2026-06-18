@@ -71,6 +71,35 @@ fn rejects_type_mismatch_in_add() {
 }
 
 #[test]
+fn equality_yields_bool_for_matching_scalars() {
+    let wf = parse("a = \"x\" == \"y\"\n\nb = 1 != 2\n\nc = true == false").unwrap();
+    let env = check(&wf, &empty_registry(), &[], &HashMap::new()).unwrap();
+    assert_eq!(env["a"], Type::Bool);
+    assert_eq!(env["b"], Type::Bool);
+    assert_eq!(env["c"], Type::Bool);
+}
+
+#[test]
+fn rejects_equality_of_mismatched_types() {
+    let wf = parse(r#"x = "a" == 1"#).unwrap();
+    assert!(check(&wf, &empty_registry(), &[], &HashMap::new()).is_err());
+}
+
+#[test]
+fn rejects_equality_of_non_scalars() {
+    let wf = parse(r#"x = { "k": 1 } == { "k": 2 }"#).unwrap();
+    assert!(check(&wf, &empty_registry(), &[], &HashMap::new()).is_err());
+}
+
+#[test]
+fn equality_drives_an_if_condition() {
+    // `mode` is a declared `string` input, so the `==` condition type-checks.
+    let wf = parse("# inputs: mode:string\n\nx = if (mode == \"discuss\") 1, (_) 2").unwrap();
+    let env = check(&wf, &empty_registry(), &[], &HashMap::new()).unwrap();
+    assert_eq!(env["x"], Type::Number);
+}
+
+#[test]
 fn infers_object_type_from_literal() {
     let wf = parse(r#"obj = { "x": 1, "ok": true }"#).unwrap();
     let env = check(&wf, &empty_registry(), &[], &HashMap::new()).unwrap();
