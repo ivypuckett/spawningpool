@@ -42,6 +42,12 @@ itself (parser, type-checker, evaluator) is not included yet.
   once; `max` is a required iteration cap (≥ 1) so the loop can't spin forever.
   The loop's value is the body's final value. Because the condition refers to the
   assigned variable, `do` is only valid as a statement's whole right-hand side.
+- **Equality and comparison operators** (workflow-dsl §6.3). `==`/`!=` compare
+  any two operands of the same type (numbers by value, arrays and objects
+  structurally) and `<`/`<=`/`>`/`>=` order two numbers or two strings; all
+  yield `bool`. These are the first operators to produce a `bool` from non-`bool`
+  operands, so `if`/`while` conditions can now test computed values rather than
+  only pre-existing booleans.
 
 ## [0.2.0] - 2026-06-12
 

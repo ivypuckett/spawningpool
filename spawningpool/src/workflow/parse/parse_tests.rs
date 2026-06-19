@@ -74,6 +74,32 @@ fn parses_not_expr() {
 }
 
 #[test]
+fn parses_comparison_and_equality_operators() {
+    // `=` (assignment) stays distinct from `==`, and each comparison token maps
+    // to its operator.
+    let cases = [
+        ("a = 1 == 2", BinOp::Eq),
+        ("a = 1 != 2", BinOp::Ne),
+        ("a = 1 < 2", BinOp::Lt),
+        ("a = 1 <= 2", BinOp::Le),
+        ("a = 1 > 2", BinOp::Gt),
+        ("a = 1 >= 2", BinOp::Ge),
+    ];
+    for (src, op) in cases {
+        let wf = parse(src).unwrap_or_else(|e| panic!("parse failed for `{src}`: {e}"));
+        assert_eq!(
+            wf.statements[0].expr,
+            Expr::BinOp {
+                op: op.clone(),
+                lhs: Box::new(num(1.0)),
+                rhs: Box::new(num(2.0)),
+            },
+            "for source `{src}`"
+        );
+    }
+}
+
+#[test]
 fn parses_object_literal() {
     let wf = parse(r#"r = { "city": city, "ok": true }"#).unwrap();
     assert_eq!(

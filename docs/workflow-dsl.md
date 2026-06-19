@@ -185,6 +185,11 @@ introduces a local binding; see §6.5.)
 - Logical: `||`, `&&`, `!` — operands must be `bool`. There is **no
   truthiness**: non-`bool` values are not coerced, they're a type error.
 - Arithmetic: `+`, `-`, `*`, `/`, `%`, `^` (where `^` is power)
+- Equality: `==`, `!=` — operands must share a type (any type); the result is
+  `bool`. Numbers compare by value, strings and bools by value, and arrays and
+  objects structurally.
+- Comparison: `<`, `<=`, `>`, `>=` — operands must both be `number` (numeric
+  order) or both be `string` (lexicographic order); the result is `bool`.
 - **No operator precedence.** Evaluation is strictly left-to-right; use
   parentheses to group. So `(1 + 2 - 3 / 4 % 5 ^ 6)` evaluates left to right.
 - Grouping is parentheses only.
