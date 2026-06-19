@@ -48,6 +48,17 @@ itself (parser, type-checker, evaluator) is not included yet.
   yield `bool`. These are the first operators to produce a `bool` from non-`bool`
   operands, so `if`/`while` conditions can now test computed values rather than
   only pre-existing booleans.
+- **An `ask <prompt> [else <fallback>]` expression** (workflow-dsl §6.8,
+  [docs/ask.md](docs/ask.md)). Pauses the run, puts a question to the human
+  operating the workflow, and resolves to their reply as a `string` — the one
+  point where control returns to a person mid-run. It's a built-in keyword (no
+  named on-disk entity to resolve) and exists only in workflows. An answer
+  (including the empty string for a bare enter) is in-band data to branch on with
+  `if`; when the question can't be answered (a headless run with no front-end, or
+  the user cancelling), the optional `else` supplies a single fallback string, and
+  without one the workflow aborts. The CLI prompts on stderr and reads stdin when
+  interactive, treating a run with `$SP_OUTPUT_PATH` set or a non-TTY stdin as
+  headless.
 
 ## [0.2.0] - 2026-06-12
 
