@@ -145,6 +145,40 @@ fn parses_foreach_as_alias_for_for() {
 }
 
 #[test]
+fn parses_do_expression() {
+    let wf = parse("answer = do (run tool poll {}) while (answer.ready) max (5)").unwrap();
+    assert_eq!(
+        wf.statements[0].expr,
+        Expr::Do {
+            var: "answer".to_string(),
+            body: Box::new(Expr::RunTool {
+                tool: "poll".to_string(),
+                args: vec![],
+                recover: vec![],
+                recover_default: None,
+            }),
+            cond: Box::new(Expr::Access {
+                base: Box::new(var("answer")),
+                keys: vec![AccessKey::Ident("ready".to_string())],
+            }),
+            max: Box::new(num(5.0)),
+        }
+    );
+}
+
+#[test]
+fn rejects_do_without_while_and_max() {
+    assert!(parse("answer = do (1)").is_err());
+    assert!(parse("answer = do (1) while (true)").is_err());
+}
+
+#[test]
+fn rejects_do_not_at_statement_top_level() {
+    // `do` refers to the assigned variable, so it can't be nested in an expression.
+    assert!(parse("answer = 1 + do (1) while (true) max (2)").is_err());
+}
+
+#[test]
 fn parses_run_tool_expression() {
     let wf = parse(r#"w = run tool get_weather { CITY: city }"#).unwrap();
     assert_eq!(

@@ -101,6 +101,23 @@ fn referenced_collects_tool_and_specialist_names() {
 }
 
 #[test]
+fn referenced_collects_tools_across_do_body_cond_and_max() {
+    let wf = parse("a = do (run tool poll {}) while (run tool keepGoing {}) max (run tool cap {})")
+        .unwrap();
+    let refs = referenced(&wf, &Registry::default());
+    assert_eq!(
+        refs.tools,
+        [
+            "poll".to_string(),
+            "keepGoing".to_string(),
+            "cap".to_string()
+        ]
+        .into_iter()
+        .collect()
+    );
+}
+
+#[test]
 fn referenced_collects_run_workflow_names() {
     let registry = Registry::default();
     let wf =

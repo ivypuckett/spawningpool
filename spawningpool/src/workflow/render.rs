@@ -103,6 +103,22 @@ fn free_vars(expr: &Expr, out: &mut BTreeSet<String>) {
             inner.remove(item);
             out.extend(inner);
         }
+        // `do (...) while (...) max (...)` binds the loop's running value to `var`
+        // (the assigned name) within `cond` only, so that self-reference is
+        // removed from the condition's free variables before merging.
+        Expr::Do {
+            var,
+            body,
+            cond,
+            max,
+        } => {
+            free_vars(body, out);
+            free_vars(max, out);
+            let mut inner = BTreeSet::new();
+            free_vars(cond, &mut inner);
+            inner.remove(var);
+            out.extend(inner);
+        }
         Expr::RunTool {
             args,
             recover,

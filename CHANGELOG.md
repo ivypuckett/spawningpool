@@ -35,6 +35,13 @@ itself (parser, type-checker, evaluator) is not included yet.
   block instead recovers it into a value, keyed by the tool's `# exits:` name
   (with `_` as the default). Each arm must produce the tool's `# output:` type,
   and the block must cover every declared non-zero exit or supply `_`.
+- **A `do (body) while (cond) max (n)` loop** (workflow-dsl §6.5.1). Re-runs a
+  body expression — no accumulator — until the `while` condition goes `false`.
+  The condition decides done-ness and sees the body's latest value bound to the
+  assigned variable, so the body just computes itself. The body runs at least
+  once; `max` is a required iteration cap (≥ 1) so the loop can't spin forever.
+  The loop's value is the body's final value. Because the condition refers to the
+  assigned variable, `do` is only valid as a statement's whole right-hand side.
 
 ## [0.2.0] - 2026-06-12
 

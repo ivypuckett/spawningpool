@@ -176,6 +176,46 @@ fn eval_expr<'ctx>(
                 Ok(serde_json::Value::Array(results))
             }
 
+            Expr::Do {
+                var,
+                body,
+                cond,
+                max,
+            } => {
+                // Cap the loop up front, in the outer scope (workflow-dsl.md §6.5).
+                let max_val = eval_expr(max, env.clone(), ctx, visited.clone()).await?;
+                let cap = max_val.as_f64().ok_or_else(|| {
+                    WorkflowError(format!("do loop `max` must be a number, got {max_val}"))
+                })?;
+                if cap.is_nan() || cap < 1.0 {
+                    return Err(WorkflowError(format!(
+                        "do loop `max` must be at least 1, got {cap}"
+                    )));
+                }
+                // Run the body at least once, then re-run while `cond` holds and
+                // the cap allows. `cond` sees the latest value bound to `var`.
+                let mut count = 0.0;
+                loop {
+                    let val = eval_expr(body, env.clone(), ctx, visited.clone()).await?;
+                    count += 1.0;
+                    if count >= cap {
+                        return Ok(val);
+                    }
+                    let mut cond_env = env.clone();
+                    cond_env.insert(var.clone(), val.clone());
+                    let again = eval_expr(cond, cond_env, ctx, visited.clone()).await?;
+                    match again.as_bool() {
+                        Some(true) => continue,
+                        Some(false) => return Ok(val),
+                        None => {
+                            return Err(WorkflowError(format!(
+                                "do loop `while` condition must be a bool, got {again}"
+                            )))
+                        }
+                    }
+                }
+            }
+
             Expr::RunTool {
                 tool,
                 args,

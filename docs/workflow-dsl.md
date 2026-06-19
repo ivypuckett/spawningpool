@@ -213,6 +213,43 @@ sub-expression is itself a `for`, it likewise accepts one sub-expression, and so
 on for deeper nesting. This is an expression; the common form is `var = foreach
 [item: arr] (...)` (§5).
 
+#### 6.5.1 Conditional repetition (do)
+
+```
+answer = do (body-expr) while (cond-expr) max (count-expr)
+```
+
+`do` re-runs a single body expression until told to stop — a `do…while`. There
+is **no accumulator**: the body just computes itself (typically a side-effecting
+`run` — poll a tool until it reports ready, retry a specialist until its answer
+passes a check). The **while condition decides done-ness**, and it sees the
+body's latest value bound to the **assigned variable** (here `answer`), so the
+body never has to compute or carry a flag.
+
+- The body **always runs at least once**. After each run its value is bound to
+  the assigned name and `cond` is evaluated; the loop **repeats while `cond` is
+  `true`** and stops once it's `false`. The loop's value is the body's final
+  value, of the body's type.
+- `cond` must be a `bool`, checked with `answer` in scope at the body's type.
+  Only the assigned variable (plus the outer scope) is visible to it; the body
+  itself can't read `answer` (it isn't bound until the body has run).
+- `max` is **required** and must be a `number`. It caps the iteration count
+  (evaluated once up front, in the outer scope), so a `do` can never loop
+  forever: the loop runs at most `max` times and then yields the last value even
+  if `cond` is still `true`. `max` must be at least 1 (a smaller cap is an
+  error).
+
+Because the condition refers to the assigned variable, `do` is only valid as a
+statement's **whole right-hand side** — it can't be nested inside a larger
+expression. For example, where `poll` outputs `{ "ready": bool }`:
+
+```
+status = do (run tool poll {}) while (!status.ready) max (10)
+```
+
+runs `poll` until it reports `ready` (or 10 attempts), with `status` typed
+`{ "ready": bool }`.
+
 ### 6.6 Invocation: `run <kind>`
 
 Tools, specialists, and workflows are all invoked with one verb, `run`, followed

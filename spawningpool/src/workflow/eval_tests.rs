@@ -176,6 +176,99 @@ async fn evaluates_for_as_map() {
 }
 
 #[tokio::test]
+async fn do_runs_once_then_stops_when_while_is_false() {
+    // The body runs at least once; the condition reads the bound value (`answer`)
+    // and is false here, so the loop stops and yields the body value.
+    let v = eval_src("answer = do (false) while (answer) max (5)")
+        .await
+        .unwrap();
+    assert_eq!(v, serde_json::json!(false));
+}
+
+#[tokio::test]
+async fn do_rejects_max_below_one() {
+    let err = eval_src("answer = do (true) while (false) max (0)")
+        .await
+        .unwrap_err();
+    assert!(err.0.contains("at least 1"));
+}
+
+/// A `poll` tool whose script bumps a persisted counter on each call and reports
+/// `{ "done": <count >= 3>, "count": <count> }`, so a `do` loop's progress comes
+/// from the tool's side effect rather than from an accumulator. Returns the tool
+/// and the temp paths (script, counter) for cleanup.
+fn polling_tool() -> (ToolDef, std::path::PathBuf, std::path::PathBuf) {
+    use std::os::unix::fs::PermissionsExt;
+
+    let nonce = format!(
+        "{}_{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    );
+    let counter_path = std::env::temp_dir().join(format!("sp_wf_do_cnt_{nonce}"));
+    let script_path = std::env::temp_dir().join(format!("sp_wf_do_{nonce}.sh"));
+    std::fs::write(
+        &script_path,
+        format!(
+            "#!/bin/sh\nn=$(cat {cnt} 2>/dev/null || echo 0)\nn=$((n+1))\necho $n > {cnt}\n\
+             if [ $n -ge 3 ]; then d=true; else d=false; fi\n\
+             printf '{{\"done\":%s,\"count\":%s}}' $d $n > \"$SP_OUTPUT_PATH\"\n",
+            cnt = counter_path.display()
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(&script_path, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+    let tool = ToolDef {
+        name: "poll".to_string(),
+        script: script_path.clone(),
+        description: String::new(),
+        params: vec![],
+        output: Some(crate::types::Type::Object(vec![
+            ("done".to_string(), crate::types::Type::Bool),
+            ("count".to_string(), crate::types::Type::Number),
+        ])),
+        exits: vec![],
+    };
+    (tool, script_path, counter_path)
+}
+
+#[tokio::test]
+async fn do_loops_until_while_reads_done_via_assigned_var() {
+    let (tool, script_path, counter_path) = polling_tool();
+    // `while (!result.done)` inspects the bound value; the cap is high enough that
+    // the tool's own `done` flag is what stops the loop, at the 3rd call.
+    let val = eval_with_tool(
+        "result = do (run tool poll {}) while (!result.done) max (10)",
+        tool,
+    )
+    .await
+    .unwrap();
+    std::fs::remove_file(&script_path).ok();
+    std::fs::remove_file(&counter_path).ok();
+    assert_eq!(val, serde_json::json!({ "done": true, "count": 3 }));
+}
+
+#[tokio::test]
+async fn do_caps_iterations_at_max() {
+    let (tool, script_path, counter_path) = polling_tool();
+    // The cap of 2 interrupts before the tool would report `done` (at 3), so the
+    // loop yields the 2nd call's value.
+    let val = eval_with_tool(
+        "result = do (run tool poll {}) while (!result.done) max (2)",
+        tool,
+    )
+    .await
+    .unwrap();
+    std::fs::remove_file(&script_path).ok();
+    std::fs::remove_file(&counter_path).ok();
+    assert_eq!(val, serde_json::json!({ "done": false, "count": 2 }));
+}
+
+#[tokio::test]
 async fn run_tool_runs_script_and_reads_output() {
     use std::os::unix::fs::PermissionsExt;
 

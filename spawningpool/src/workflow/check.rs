@@ -184,6 +184,32 @@ fn infer(expr: &Expr, env: &TypeEnv, ctx: &Ctx, chain: &[String]) -> Result<Type
             Ok(Type::Array(Box::new(body_ty)))
         }
 
+        Expr::Do {
+            var,
+            body,
+            cond,
+            max,
+        } => {
+            let body_ty = infer(body, env, ctx, chain)?;
+            // The `while` condition sees the loop's running value bound to `var`.
+            let mut cond_env = env.clone();
+            cond_env.insert(var.clone(), body_ty.clone());
+            let cond_ty = infer(cond, &cond_env, ctx, chain)?;
+            if cond_ty != Type::Bool {
+                return Err(TypeError(format!(
+                    "do loop `while` condition must be bool, found `{cond_ty}`"
+                )));
+            }
+            // The cap is a plain count, evaluated in the outer scope (no `var`).
+            let max_ty = infer(max, env, ctx, chain)?;
+            if max_ty != Type::Number {
+                return Err(TypeError(format!(
+                    "do loop `max` must be a number, found `{max_ty}`"
+                )));
+            }
+            Ok(body_ty)
+        }
+
         Expr::RunTool {
             tool,
             args,

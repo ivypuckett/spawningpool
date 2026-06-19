@@ -114,6 +114,46 @@ fn infers_for_as_array_map() {
 }
 
 #[test]
+fn infers_do_as_body_type_with_var_in_scope_for_while() {
+    let t = tool(
+        "poll",
+        vec![],
+        Some(Type::Object(vec![("ready".to_string(), Type::Bool)])),
+    );
+    // The `while` condition reads `answer`, the value being bound by the loop.
+    let wf = parse("answer = do (run tool poll {}) while (!answer.ready) max (3)").unwrap();
+    let env = check(&wf, &empty_registry(), &[t], &HashMap::new()).unwrap();
+    assert_eq!(
+        env["answer"],
+        Type::Object(vec![("ready".to_string(), Type::Bool)])
+    );
+}
+
+#[test]
+fn rejects_do_with_non_bool_while() {
+    let t = tool(
+        "poll",
+        vec![],
+        Some(Type::Object(vec![("count".to_string(), Type::Number)])),
+    );
+    let wf = parse("answer = do (run tool poll {}) while (answer.count) max (3)").unwrap();
+    assert!(check(&wf, &empty_registry(), &[t], &HashMap::new()).is_err());
+}
+
+#[test]
+fn rejects_do_with_non_number_max() {
+    let wf = parse(r#"answer = do (1) while (true) max ("lots")"#).unwrap();
+    assert!(check(&wf, &empty_registry(), &[], &HashMap::new()).is_err());
+}
+
+#[test]
+fn rejects_do_whose_while_reads_an_undefined_variable() {
+    // Only the assigned `answer` is in scope for the condition; `nope` is not.
+    let wf = parse("answer = do (1) while (nope) max (3)").unwrap();
+    assert!(check(&wf, &empty_registry(), &[], &HashMap::new()).is_err());
+}
+
+#[test]
 fn infers_run_tool_output_type() {
     let t = tool(
         "ping",

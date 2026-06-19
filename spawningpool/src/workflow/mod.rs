@@ -215,6 +215,13 @@ fn collect(expr: &Expr, registry: &Registry, refs: &mut Referenced) {
             collect(array, registry, refs);
             collect(body, registry, refs);
         }
+        Expr::Do {
+            body, cond, max, ..
+        } => {
+            collect(body, registry, refs);
+            collect(cond, registry, refs);
+            collect(max, registry, refs);
+        }
         Expr::RunTool {
             tool,
             args,
