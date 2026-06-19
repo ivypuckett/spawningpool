@@ -36,7 +36,9 @@
 //! let keys: HashMap<String, String> = HashMap::new();
 //! // Values for the workflow's `# inputs:` (none declared here).
 //! let inputs = spawningpool::workflow::resolve_inputs(&workflow.inputs, &HashMap::new())?;
-//! let result = eval(&workflow, &registry, &tools, &client, &keys, &inputs, &workflows).await?;
+//! // No `ask` here; a headless handler (always `Unavailable`) suffices.
+//! let ask = |_: &str| spawningpool::workflow::AskOutcome::Unavailable;
+//! let result = eval(&workflow, &registry, &tools, &client, &keys, &inputs, &workflows, &ask).await?;
 //! println!("{result}");
 //! # Ok(())
 //! # }
@@ -57,7 +59,7 @@ use crate::types::{Param, Type};
 
 pub use ast::{AccessKey, BinOp, Expr, Statement, Workflow};
 pub use check::{check, specialist_return_type, TypeEnv, TypeError};
-pub use eval::{eval, WorkflowError};
+pub use eval::{eval, AskHandler, AskOutcome, WorkflowError};
 pub use parse::{parse, ParseError};
 pub use render::mermaid;
 
@@ -253,6 +255,12 @@ fn collect(expr: &Expr, registry: &Registry, refs: &mut Referenced) {
                 }
             }
             collect(prompt, registry, refs);
+        }
+        Expr::Ask { prompt, fallback } => {
+            collect(prompt, registry, refs);
+            if let Some(fallback) = fallback {
+                collect(fallback, registry, refs);
+            }
         }
     }
 }

@@ -1,7 +1,8 @@
 use std::collections::{BTreeSet, HashMap, VecDeque};
-use std::io::Write;
+use std::io::{IsTerminal, Write};
 
 use spawningpool::ai::{Client, StopReason};
+use spawningpool::workflow::AskOutcome;
 use spawningpool::{Registry, RunEvent};
 
 use crate::cli::OutputFormat;
@@ -173,10 +174,12 @@ pub(crate) async fn run_workflow(name: &str, args: &[String]) -> Result<(), Stri
     let keys = provider_keys(&registry);
     warn_unset_keys(&closure.specialists, &registry, &keys);
     let client = Client::new();
-    let result =
-        spawningpool::workflow::eval(root, &registry, &tools, &client, &keys, &inputs, workflows)
-            .await
-            .map_err(|e| format!("workflow '{name}' failed: {e}"))?;
+    let ask = ask_handler();
+    let result = spawningpool::workflow::eval(
+        root, &registry, &tools, &client, &keys, &inputs, workflows, &ask,
+    )
+    .await
+    .map_err(|e| format!("workflow '{name}' failed: {e}"))?;
 
     // GHA-style output: when invoked with $SP_OUTPUT_PATH set (e.g. as another
     // runner's tool), write the result there so it composes like a tool.
@@ -186,6 +189,35 @@ pub(crate) async fn run_workflow(name: &str, args: &[String]) -> Result<(), Stri
     }
     println!("{result}");
     Ok(())
+}
+
+/// Build the handler a workflow's `ask` expressions use (workflow-dsl.md §6.8,
+/// docs/ask.md). The run is **headless** — no one to ask, so every `ask` falls
+/// back to its `else` or aborts — when `$SP_OUTPUT_PATH` is set (the workflow is
+/// being consumed as a tool by an outer runner) or stdin is not a TTY (CI, a
+/// pipe). Otherwise the prompt is written to stderr (stdout carries the result)
+/// and a line is read from stdin: a reply (the trailing newline stripped, an
+/// empty line allowed) is the answer; EOF — input closed without answering — is
+/// treated as unavailable.
+fn ask_handler() -> impl Fn(&str) -> AskOutcome {
+    let headless = std::env::var_os("SP_OUTPUT_PATH").is_some() || !std::io::stdin().is_terminal();
+    move |prompt: &str| {
+        if headless {
+            return AskOutcome::Unavailable;
+        }
+        eprint!("{prompt} ");
+        let _ = std::io::stderr().flush();
+        let mut line = String::new();
+        match std::io::stdin().read_line(&mut line) {
+            Ok(0) => AskOutcome::Unavailable,
+            Ok(_) => {
+                let answer = line.strip_suffix('\n').unwrap_or(&line);
+                let answer = answer.strip_suffix('\r').unwrap_or(answer);
+                AskOutcome::Answered(answer.to_string())
+            }
+            Err(_) => AskOutcome::Unavailable,
+        }
+    }
 }
 
 /// A root workflow and everything reachable from it through `run`: the name→AST

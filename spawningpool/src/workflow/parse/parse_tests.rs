@@ -286,6 +286,47 @@ fn rejects_run_with_unknown_kind() {
 }
 
 #[test]
+fn parses_ask_without_fallback() {
+    let wf = parse(r#"city = ask "Which city?""#).unwrap();
+    assert_eq!(
+        wf.statements[0].expr,
+        Expr::Ask {
+            prompt: Box::new(str("Which city?")),
+            fallback: None,
+        }
+    );
+}
+
+#[test]
+fn parses_ask_with_else_fallback() {
+    let wf = parse(r#"city = ask "Which city?" else "Portland""#).unwrap();
+    assert_eq!(
+        wf.statements[0].expr,
+        Expr::Ask {
+            prompt: Box::new(str("Which city?")),
+            fallback: Some(Box::new(str("Portland"))),
+        }
+    );
+}
+
+#[test]
+fn parses_ask_embedded_in_an_expression() {
+    // Wrapped in parens so the `+` belongs to the outer expression and the
+    // ask's prompt stops at the closing paren (docs/ask.md §1).
+    let wf = parse(r#"p = ("City: " + ask "Which city?")"#).unwrap();
+    assert_eq!(
+        wf.statements[0].expr,
+        add(
+            str("City: "),
+            Expr::Ask {
+                prompt: Box::new(str("Which city?")),
+                fallback: None,
+            },
+        )
+    );
+}
+
+#[test]
 fn parses_run_tool_with_else_block() {
     let wf = parse(
         r#"r = run tool ping { HOST: h } else { unreachable: { "ms": 0 }, _: { "ms": 10 } }"#,

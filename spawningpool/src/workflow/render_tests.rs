@@ -34,6 +34,21 @@ fn free_vars_excludes_for_binding() {
 }
 
 #[test]
+fn free_vars_collects_ask_prompt_and_fallback() {
+    assert_eq!(vars("y = ask prompt else fb"), set(&["prompt", "fb"]));
+}
+
+#[test]
+fn mermaid_renders_ask_as_a_pure_node() {
+    // `ask` names no callee, so it renders as a plain data node showing its own
+    // variable name, with an edge from the variable its prompt reads.
+    let wf = parse("q = topic\n\nans = ask q").unwrap();
+    let out = mermaid(&wf);
+    assert!(out.contains("n1(\"ans\")"), "{out}");
+    assert!(out.contains("n0 --q--> n1"), "{out}");
+}
+
+#[test]
 fn mermaid_starts_with_flowchart() {
     let wf = parse("a = 1").unwrap();
     assert!(mermaid(&wf).starts_with("flowchart TD\n"));

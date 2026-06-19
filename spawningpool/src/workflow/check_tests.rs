@@ -330,6 +330,32 @@ fn rejects_run_specialist_for_unknown_specialist() {
 }
 
 #[test]
+fn infers_ask_as_string() {
+    let wf = parse(r#"city = ask "Which city?""#).unwrap();
+    let env = check(&wf, &empty_registry(), &[], &HashMap::new()).unwrap();
+    assert_eq!(env["city"], Type::String);
+}
+
+#[test]
+fn infers_ask_with_fallback_as_string() {
+    let wf = parse(r#"city = ask "Which city?" else "Portland""#).unwrap();
+    let env = check(&wf, &empty_registry(), &[], &HashMap::new()).unwrap();
+    assert_eq!(env["city"], Type::String);
+}
+
+#[test]
+fn rejects_ask_with_non_string_prompt() {
+    let wf = parse("x = ask 42").unwrap();
+    assert!(check(&wf, &empty_registry(), &[], &HashMap::new()).is_err());
+}
+
+#[test]
+fn rejects_ask_with_non_string_fallback() {
+    let wf = parse(r#"x = ask "q" else 42"#).unwrap();
+    assert!(check(&wf, &empty_registry(), &[], &HashMap::new()).is_err());
+}
+
+#[test]
 fn infers_if_expression_type() {
     let wf = parse(r#"v = if (true) "yes", (_) "no""#).unwrap();
     let env = check(&wf, &empty_registry(), &[], &HashMap::new()).unwrap();

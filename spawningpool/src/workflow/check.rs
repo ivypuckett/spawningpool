@@ -284,6 +284,27 @@ fn infer(expr: &Expr, env: &TypeEnv, ctx: &Ctx, chain: &[String]) -> Result<Type
             Ok(specialist_return_type())
         }
 
+        Expr::Ask { prompt, fallback } => {
+            let prompt_ty = infer(prompt, env, ctx, chain)?;
+            if prompt_ty != Type::String {
+                return Err(TypeError(format!(
+                    "ask prompt must be a string, found `{prompt_ty}`"
+                )));
+            }
+            // The fallback is the value the `ask` takes when it can't be
+            // answered, so it must be the same `string` type the answer would
+            // have had (docs/ask.md §4).
+            if let Some(fallback) = fallback {
+                let fallback_ty = infer(fallback, env, ctx, chain)?;
+                if fallback_ty != Type::String {
+                    return Err(TypeError(format!(
+                        "ask `else` fallback must be a string, found `{fallback_ty}`"
+                    )));
+                }
+            }
+            Ok(Type::String)
+        }
+
         Expr::RunWorkflow {
             workflow: name,
             args,

@@ -221,6 +221,10 @@ impl Parser {
                 self.bump();
                 return self.parse_run();
             }
+            Some("ask") => {
+                self.bump();
+                return self.parse_ask();
+            }
             Some(_) => {
                 // Non-keyword identifier → variable reference.
                 let s = self.expect_ident()?;
@@ -363,6 +367,27 @@ impl Parser {
                 "expected `tool`, `workflow`, or `specialist` after `run`, found `{other}`"
             ))),
         }
+    }
+
+    /// Parse an `ask <prompt-expr> [else <string-expr>]` expression
+    /// (workflow-dsl.md §6.8, docs/ask.md). The `ask` keyword is already
+    /// consumed. The prompt binds greedily like a `run specialist` prompt —
+    /// binary parsing stops at `)`, `else`, or end of input — so wrap the `ask`
+    /// in parentheses when embedding it in a larger expression. An `else`
+    /// supplies the single string fallback used when the question can't be
+    /// answered.
+    fn parse_ask(&mut self) -> Result<Expr, ParseError> {
+        let prompt = self.parse_expr()?;
+        let fallback = if self.peek_ident().as_deref() == Some("else") {
+            self.bump();
+            Some(Box::new(self.parse_expr()?))
+        } else {
+            None
+        };
+        Ok(Expr::Ask {
+            prompt: Box::new(prompt),
+            fallback,
+        })
     }
 
     /// Parse a `{ KEY: expr, ... }` argument map — the argument shape of

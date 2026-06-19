@@ -27,6 +27,25 @@ impl std::fmt::Display for WorkflowError {
 
 impl std::error::Error for WorkflowError {}
 
+/// The result of putting an `ask` question to the user (workflow-dsl.md §6.8,
+/// docs/ask.md §5). Split the same way the rest of the DSL splits errors from
+/// data: an [`AskOutcome::Answered`] reply (including the empty string for a bare
+/// enter) is in-band data; [`AskOutcome::Unavailable`] is the out-of-band
+/// "couldn't ask" — a headless run with no front-end, or the user cancelling /
+/// closing input — that triggers the `ask`'s `else` fallback, or aborts when
+/// there is none.
+pub enum AskOutcome {
+    /// The user replied; carries their answer verbatim (may be `""`).
+    Answered(String),
+    /// The question couldn't be put to anyone.
+    Unavailable,
+}
+
+/// Handles an `ask`: given the prompt string, returns the user's [`AskOutcome`].
+/// Injected by the caller so the library stays decoupled from any particular
+/// front-end (the CLI reads a TTY; tests supply a canned handler).
+pub type AskHandler<'a> = dyn Fn(&str) -> AskOutcome + 'a;
+
 /// Bundles the immutable evaluation context passed through all recursive calls.
 struct EvalCtx<'a> {
     registry: &'a Registry,
@@ -34,6 +53,7 @@ struct EvalCtx<'a> {
     client: &'a Client,
     keys: &'a HashMap<String, String>,
     workflows: &'a HashMap<String, Workflow>,
+    ask: &'a AskHandler<'a>,
 }
 
 type Env = HashMap<String, serde_json::Value>;
@@ -48,10 +68,14 @@ type Env = HashMap<String, serde_json::Value>;
 /// value for each declared `# inputs:` entry (workflow-dsl.md §5.1), seeded into
 /// scope before the first statement; build it with [`super::resolve_inputs`].
 /// `workflows` maps each name a `run` may invoke (the transitive closure) to its
-/// parsed AST; an empty map is fine for a workflow that never uses `run`.
+/// parsed AST; an empty map is fine for a workflow that never uses `run`. `ask`
+/// handles each `ask` expression (workflow-dsl.md §6.8): given the prompt, it
+/// returns the user's [`AskOutcome`]; a handler that always returns
+/// [`AskOutcome::Unavailable`] models a headless run.
 ///
 /// Returns the value produced by the last statement, or `Null` if the workflow
 /// has no statements. Tool and specialist outputs compose through JSON values.
+#[allow(clippy::too_many_arguments)]
 pub async fn eval(
     workflow: &Workflow,
     registry: &Registry,
@@ -60,6 +84,7 @@ pub async fn eval(
     keys: &HashMap<String, String>,
     inputs: &HashMap<String, serde_json::Value>,
     workflows: &HashMap<String, Workflow>,
+    ask: &AskHandler<'_>,
 ) -> Result<serde_json::Value, WorkflowError> {
     let ctx = EvalCtx {
         registry,
@@ -67,6 +92,7 @@ pub async fn eval(
         client,
         keys,
         workflows,
+        ask,
     };
     eval_workflow(workflow, &ctx, inputs, Vec::new()).await
 }
@@ -336,6 +362,26 @@ fn eval_expr<'ctx>(
                 .map_err(|e| WorkflowError(format!("specialist `{spec_name}` failed: {e}")))?;
 
                 Ok(collected.into_envelope(spec_name, &specialist.model))
+            }
+
+            Expr::Ask { prompt, fallback } => {
+                let prompt_val = eval_expr(prompt, env.clone(), ctx, visited.clone()).await?;
+                let prompt_str = prompt_val.as_str().ok_or_else(|| {
+                    WorkflowError(format!("ask prompt must be a string, got {prompt_val}"))
+                })?;
+
+                match (ctx.ask)(prompt_str) {
+                    // In-band: the reply is ordinary string data (incl. "").
+                    AskOutcome::Answered(answer) => Ok(serde_json::Value::String(answer)),
+                    // Out-of-band: recover with the `else` fallback, or abort.
+                    AskOutcome::Unavailable => match fallback {
+                        Some(fallback) => eval_expr(fallback, env, ctx, visited.clone()).await,
+                        None => Err(WorkflowError(format!(
+                            "ask couldn't be answered (headless run or cancelled) \
+                             and has no `else` fallback: {prompt_str}"
+                        ))),
+                    },
+                }
             }
 
             Expr::RunWorkflow {
