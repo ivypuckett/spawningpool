@@ -57,44 +57,33 @@ doesn't have. A workflow that needs more than text does the conversion
 An **empty** answer (the user just presses enter) is still a successful string
 answer — the empty string `""`. That is in-band data: test for it with `if`, the
 same way [errors-are-data](workflow-dsl.md#7-errors-are-data) treats a tool's
-in-band failure field. It is *not* the `declined` case in §4.
+in-band failure field. It is *not* the same as the user declining to answer (§4).
 
 ## 4. Headless runs: recover with `else`
 
 A workflow does not always have an interactive front-end. Invoked in CI, driven
 by an outer runner through `$SP_OUTPUT_PATH`
 ([CLI → run workflow](cli.md#run-workflow)), or otherwise non-interactively,
-there is simply no one to ask. Mirroring the way
-[`run tool` recovers a non-zero exit](workflow-dsl.md#66-invocation-run-kind),
-`ask` can carry an `else` block that turns "couldn't ask" into a value instead
-of aborting the workflow:
+there is simply no one to ask. An `ask` can carry an `else` fallback that turns
+"couldn't ask" into a value instead of aborting the workflow:
 
 ```
-city = ask "Which city should I check?" else {
-  unavailable: "Portland",
-  declined: "Portland",
-  _: "Portland"
-}
+city = ask "Which city should I check?" else "Portland"
 ```
 
-The arms are keyed by a **fixed, built-in vocabulary** of reasons — unlike a
-tool's `else`, whose arm names come from that tool's `# exits:` header, the set
-here is closed and the same for every `ask`:
+`else <string-expr>` is a **single fallback string**, used **whenever the
+question can't be answered** — for any reason: the run is headless (no front-end:
+CI, `$SP_OUTPUT_PATH`-driven, piped, etc.), or a front-end is present but the
+user cancels or closes input (EOF) without answering. There is no per-reason
+branching — unlike [`run tool`'s `else`](workflow-dsl.md#66-invocation-run-kind),
+which keys arms off a tool's declared exits. Because `ask` always yields a
+`string` (§3), the recovery is just another string, so one expression is all the
+fallback needs. (If a workflow ever needs to know *why* it fell back, that's a
+richer exit-envelope story left for later, the same as for tools.)
 
-| reason | when it fires |
-| --- | --- |
-| `unavailable` | the run has no interactive front-end (headless: CI, `$SP_OUTPUT_PATH`-driven, piped, etc.), so the question can't be put to anyone. |
-| `declined` | a front-end **is** present, but the user dismisses or cancels the prompt, or closes input (EOF) without answering. |
-| `_` | default — catches any reason not named above. |
-
-The rules match [`run tool`'s `else`](workflow-dsl.md#66-invocation-run-kind):
-
-- **Every arm — and the answered path — produces a `string`.** Because `ask` is
-  always a string (§3), this just means each arm is a string expression, so
-  `city` above is a `string` no matter which path is taken.
-- The block must be **exhaustive**: name both `unavailable` and `declined`, or
-  supply `_`.
-- With **no** `else` block, an un-answerable `ask` aborts the workflow — the same
+- The fallback must be a `string` — the same type the answer would have had — so
+  `city` is a `string` whichever path is taken.
+- With **no** `else`, an un-answerable `ask` aborts the workflow — the same
   default a non-zero tool exit has when it carries no `else`.
 
 ## 5. Where it sits in "errors are data"
@@ -102,7 +91,7 @@ The rules match [`run tool`'s `else`](workflow-dsl.md#66-invocation-run-kind):
 `ask` splits the same way the rest of the DSL does
 ([§7](workflow-dsl.md#7-errors-are-data)):
 
-- **Out-of-band** — *couldn't ask at all* (`unavailable`/`declined`). Like a
-  non-zero tool exit: recovered with `else`, or it aborts.
+- **Out-of-band** — *couldn't ask at all* (headless, or the user declined). Like
+  a non-zero tool exit: recovered with the `else` fallback, or it aborts.
 - **In-band** — *the content of the answer*, including an empty string. Ordinary
   string data; branch on it with `if`.
