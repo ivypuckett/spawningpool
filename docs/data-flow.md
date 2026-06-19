@@ -1,5 +1,9 @@
 # Data flow
 
+> The **data** channel — one of [the three channels](channels.md) a run moves
+> information along (data, [asks](ask.md), [logs](workflow-logging.md)). This is
+> the spine: the explicit, typed values passed step to step.
+
 How input and output move across every boundary in spawningpool: into and out
 of tools, specialists, and workflows. Each boundary below is a **contract card** —
 what goes *in*, what comes *out*, how it's *encoded* on the wire, and what happens

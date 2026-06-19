@@ -1,5 +1,10 @@
 # Asking the user (`ask`)
 
+> The **asks** channel — one of [the three channels](channels.md) a run moves
+> information along ([data](data-flow.md), asks, [logs](workflow-logging.md)). It
+> branches off the data spine to reach a person, then rejoins it: the answer
+> re-enters as ordinary data.
+
 A workflow expression that pauses the run, puts a question to the human
 operating it, and resolves to whatever they type back. It is the one point in
 the DSL where control returns to a person mid-run.
