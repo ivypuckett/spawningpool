@@ -339,6 +339,20 @@ Access is type-directed:
   to keys of differing declared types, so the result type isn't statically
   known. See §8.
 
+### 6.8 Asking the user (`ask`)
+
+```
+answer = ask <prompt-expr>
+```
+
+`ask` pauses the run and puts a question (`prompt-expr`, a `string`) to the human
+operating the workflow, resolving to their typed reply as a `string`. It is a
+built-in expression — not a `run <kind>`, since there is no named on-disk entity
+to resolve — and exists only in workflows (a tool has no user; a specialist is a
+model call). On a headless run it carries an `else` block keyed by a fixed
+`unavailable`/`declined`/`_` vocabulary, mirroring `run tool`'s recovery (§6.6).
+See [Asking the user](ask.md) for the full contract.
+
 ## 7. Errors are data
 
 Runtime failures are values, not aborts. The workflow does not throw on a failed

@@ -294,7 +294,7 @@ type-checks it (callee result types inferred recursively), and cycle-checks befo
 anything runs; because the kind selects the namespace, a tool and a workflow may
 share a name without ambiguity.
 
-Each specialist invoked by the workflow's `ask` expressions authenticates with
+Each specialist invoked by the workflow's `run specialist` calls authenticates with
 its own provider's key, sourced from that provider's `--api-key-env`; a workflow
 can freely mix providers. A workflow that only calls tools needs no key.
 
