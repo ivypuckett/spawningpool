@@ -1,5 +1,9 @@
 # Workflow logging
 
+> The **logs** channel — one of [the three channels](channels.md) a run moves
+> information along ([data](data-flow.md), [asks](ask.md), logs). It only ever
+> reports outward: nothing in a run reads its own logs to make a decision.
+
 Structured observability for harness refinement, retrospective analysis, and
 communicating run state to the user.
 

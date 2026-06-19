@@ -11,8 +11,21 @@ whole interface.
 - **[Workflow DSL](workflow-dsl.md)** — chain tools and specialists with typed, structured data.
   - **[Asking the user](ask.md)** — pause a workflow for real-time input from the operator.
   - **[Workflow logging](workflow-logging.md)** — structured NDJSON event format for observability and retrospective.
+- **[The three channels](channels.md)** — the one map over the three below: how **data**, **asks**, and **logs** relate, differ, and fail.
 - **[Data flow](data-flow.md)** — how input/output moves across tools, specialists, and workflows.
 - **[Configuration](configuration.md)** — registry location, API keys, env vars.
+
+## Three channels of information
+
+A workflow run moves information along three distinct channels — read them as one
+set, not three unrelated features:
+
+1. **Data** (input/output) — the explicit, typed values passed step to step; the spine of a run. → [Data flow](data-flow.md)
+2. **Asks** — a detour off that spine to put a question to the human operator and bring an answer back. → [Asking the user](ask.md)
+3. **Logs** — a one-way record of the run's state and history for an outside observer. → [Workflow logging](workflow-logging.md)
+
+[The three channels](channels.md) is the condensed map of how they relate, where
+each fits, and how each fails.
 
 ## The model
 
