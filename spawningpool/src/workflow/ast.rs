@@ -118,6 +118,16 @@ pub enum Expr {
         specialist: String,
         prompt: Box<Expr>,
     },
+    /// Ask the user `ask <prompt-expr> [else <string-expr>]` (workflow-dsl.md
+    /// §6.8, docs/ask.md). Pauses the run and resolves to the user's reply as a
+    /// `string`. The optional `fallback` supplies a single string when the
+    /// question can't be answered (headless run, or the user cancels); with no
+    /// fallback an un-answerable `ask` aborts the workflow. Unlike `run <kind>`
+    /// it resolves no named on-disk entity, so it's a built-in keyword.
+    Ask {
+        prompt: Box<Expr>,
+        fallback: Option<Box<Expr>>,
+    },
 }
 
 /// A single assignment statement `name = expr`.

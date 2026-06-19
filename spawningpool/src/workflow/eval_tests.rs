@@ -4,6 +4,12 @@
 use super::*;
 use crate::workflow::parse::parse;
 
+/// A headless ask handler for tests that don't exercise `ask`: every question is
+/// unanswerable. (A function item coerces to `&dyn Fn(&str) -> AskOutcome`.)
+fn no_ask(_: &str) -> AskOutcome {
+    AskOutcome::Unavailable
+}
+
 async fn eval_src(src: &str) -> Result<serde_json::Value, WorkflowError> {
     let wf = parse(src).expect("parse failed");
     let registry = Registry::default();
@@ -11,7 +17,17 @@ async fn eval_src(src: &str) -> Result<serde_json::Value, WorkflowError> {
     let keys = HashMap::new();
     let inputs = HashMap::new();
     let workflows = HashMap::new();
-    eval(&wf, &registry, &[], &client, &keys, &inputs, &workflows).await
+    eval(
+        &wf,
+        &registry,
+        &[],
+        &client,
+        &keys,
+        &inputs,
+        &workflows,
+        &no_ask,
+    )
+    .await
 }
 
 #[tokio::test]
@@ -41,9 +57,18 @@ async fn seeds_declared_inputs_into_scope() {
     let mut inputs = HashMap::new();
     inputs.insert("CITY".to_string(), serde_json::json!("Portland"));
     let workflows = HashMap::new();
-    let v = eval(&wf, &registry, &[], &client, &keys, &inputs, &workflows)
-        .await
-        .unwrap();
+    let v = eval(
+        &wf,
+        &registry,
+        &[],
+        &client,
+        &keys,
+        &inputs,
+        &workflows,
+        &no_ask,
+    )
+    .await
+    .unwrap();
     assert_eq!(v, serde_json::json!("hi Portland"));
 }
 
@@ -89,9 +114,18 @@ async fn equality_treats_integer_and_float_as_equal() {
     let mut inputs = HashMap::new();
     inputs.insert("N".to_string(), serde_json::json!(1)); // integer representation
     let workflows = HashMap::new();
-    let v = eval(&wf, &registry, &[], &client, &keys, &inputs, &workflows)
-        .await
-        .unwrap();
+    let v = eval(
+        &wf,
+        &registry,
+        &[],
+        &client,
+        &keys,
+        &inputs,
+        &workflows,
+        &no_ask,
+    )
+    .await
+    .unwrap();
     assert_eq!(v, serde_json::json!(true));
 }
 
@@ -165,6 +199,7 @@ async fn evaluates_array_index_access() {
         client: &client,
         keys: &keys,
         workflows: &workflows,
+        ask: &no_ask,
     };
     let val = eval_access(arr, &AccessKey::Index(1), Env::new(), &ctx, Vec::new())
         .await
@@ -204,6 +239,7 @@ async fn evaluates_for_as_map() {
         client: &client,
         keys: &keys,
         workflows: &workflows,
+        ask: &no_ask,
     };
 
     let mut last = serde_json::Value::Null;
@@ -359,6 +395,7 @@ async fn run_tool_runs_script_and_reads_output() {
         &keys,
         &inputs,
         &workflows,
+        &no_ask,
     )
     .await
     .unwrap();
@@ -406,6 +443,7 @@ async fn run_tool_errors_when_sp_output_path_omitted() {
         &keys,
         &inputs,
         &workflows,
+        &no_ask,
     )
     .await
     .unwrap_err();
@@ -462,7 +500,17 @@ async fn eval_with_tool(src: &str, tool: ToolDef) -> Result<serde_json::Value, W
     let keys = HashMap::new();
     let inputs = HashMap::new();
     let workflows = HashMap::new();
-    eval(&wf, &registry, &[tool], &client, &keys, &inputs, &workflows).await
+    eval(
+        &wf,
+        &registry,
+        &[tool],
+        &client,
+        &keys,
+        &inputs,
+        &workflows,
+        &no_ask,
+    )
+    .await
 }
 
 #[tokio::test]
@@ -556,6 +604,7 @@ async fn run_nests_a_workflow_passing_inputs() {
         &keys,
         &inputs,
         &workflows,
+        &no_ask,
     )
     .await
     .unwrap();
@@ -578,8 +627,88 @@ async fn run_detects_a_cycle() {
     let client = crate::ai::Client::new();
     let keys = HashMap::new();
     let inputs = HashMap::new();
-    let err = eval(&a, &registry, &[], &client, &keys, &inputs, &workflows)
+    let err = eval(
+        &a,
+        &registry,
+        &[],
+        &client,
+        &keys,
+        &inputs,
+        &workflows,
+        &no_ask,
+    )
+    .await
+    .unwrap_err();
+    assert!(err.0.contains("cycle"), "{}", err.0);
+}
+
+/// Evaluate `src` with a specific `ask` handler (the workflows-only `ask` path).
+async fn eval_src_with_ask(
+    src: &str,
+    ask: &AskHandler<'_>,
+) -> Result<serde_json::Value, WorkflowError> {
+    let wf = parse(src).expect("parse failed");
+    let registry = Registry::default();
+    let client = crate::ai::Client::new();
+    let keys = HashMap::new();
+    let inputs = HashMap::new();
+    let workflows = HashMap::new();
+    eval(
+        &wf,
+        &registry,
+        &[],
+        &client,
+        &keys,
+        &inputs,
+        &workflows,
+        ask,
+    )
+    .await
+}
+
+#[tokio::test]
+async fn ask_returns_the_user_answer() {
+    let answer = |_: &str| AskOutcome::Answered("Boston".to_string());
+    let v = eval_src_with_ask(r#"c = ask "Which city?""#, &answer)
+        .await
+        .unwrap();
+    assert_eq!(v, serde_json::json!("Boston"));
+}
+
+#[tokio::test]
+async fn ask_empty_answer_is_the_empty_string() {
+    // A bare enter is in-band data: a successful empty-string answer, not an
+    // "unavailable" (docs/ask.md §3).
+    let answer = |_: &str| AskOutcome::Answered(String::new());
+    let v = eval_src_with_ask(r#"c = ask "Which city?""#, &answer)
+        .await
+        .unwrap();
+    assert_eq!(v, serde_json::json!(""));
+}
+
+#[tokio::test]
+async fn ask_evaluates_its_prompt_and_passes_it_to_the_handler() {
+    // Echo the prompt back so we can see it was evaluated (concatenation) and
+    // handed to the handler.
+    let echo = |p: &str| AskOutcome::Answered(format!("got:{p}"));
+    let v = eval_src_with_ask(r#"c = ask ("Which " + "city?")"#, &echo)
+        .await
+        .unwrap();
+    assert_eq!(v, serde_json::json!("got:Which city?"));
+}
+
+#[tokio::test]
+async fn ask_unavailable_falls_back_to_else() {
+    let v = eval_src_with_ask(r#"c = ask "Which city?" else "Portland""#, &no_ask)
+        .await
+        .unwrap();
+    assert_eq!(v, serde_json::json!("Portland"));
+}
+
+#[tokio::test]
+async fn ask_unavailable_without_else_aborts() {
+    let err = eval_src_with_ask(r#"c = ask "Which city?""#, &no_ask)
         .await
         .unwrap_err();
-    assert!(err.0.contains("cycle"), "{}", err.0);
+    assert!(err.0.contains("ask couldn't be answered"), "{}", err.0);
 }

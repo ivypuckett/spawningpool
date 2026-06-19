@@ -141,6 +141,12 @@ fn free_vars(expr: &Expr, out: &mut BTreeSet<String>) {
             }
         }
         Expr::RunSpecialist { prompt, .. } => free_vars(prompt, out),
+        Expr::Ask { prompt, fallback } => {
+            free_vars(prompt, out);
+            if let Some(fallback) = fallback {
+                free_vars(fallback, out);
+            }
+        }
     }
 }
 
