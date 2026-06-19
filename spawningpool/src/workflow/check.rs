@@ -184,32 +184,30 @@ fn infer(expr: &Expr, env: &TypeEnv, ctx: &Ctx, chain: &[String]) -> Result<Type
             Ok(Type::Array(Box::new(body_ty)))
         }
 
-        Expr::Do { key, body } => {
+        Expr::Do {
+            var,
+            body,
+            cond,
+            max,
+        } => {
             let body_ty = infer(body, env, ctx, chain)?;
-            let fields = match body_ty {
-                Type::Object(fields) => fields,
-                other => {
-                    return Err(TypeError(format!(
-                        "do loop body must be an object with a `{key}` bool field, found `{other}`"
-                    )))
-                }
-            };
-            match fields.iter().find(|(k, _)| k == key) {
-                Some((_, Type::Bool)) => {}
-                Some((_, other)) => {
-                    return Err(TypeError(format!(
-                        "do loop `{key}` field must be bool, found `{other}`"
-                    )))
-                }
-                None => {
-                    return Err(TypeError(format!(
-                        "do loop body object has no `{key}` field to check"
-                    )))
-                }
+            // The `while` condition sees the loop's running value bound to `var`.
+            let mut cond_env = env.clone();
+            cond_env.insert(var.clone(), body_ty.clone());
+            let cond_ty = infer(cond, &cond_env, ctx, chain)?;
+            if cond_ty != Type::Bool {
+                return Err(TypeError(format!(
+                    "do loop `while` condition must be bool, found `{cond_ty}`"
+                )));
             }
-            // The loop yields the body object with the checked field removed.
-            let rest = fields.into_iter().filter(|(k, _)| k != key).collect();
-            Ok(Type::Object(rest))
+            // The cap is a plain count, evaluated in the outer scope (no `var`).
+            let max_ty = infer(max, env, ctx, chain)?;
+            if max_ty != Type::Number {
+                return Err(TypeError(format!(
+                    "do loop `max` must be a number, found `{max_ty}`"
+                )));
+            }
+            Ok(body_ty)
         }
 
         Expr::RunTool {

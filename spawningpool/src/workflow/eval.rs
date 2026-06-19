@@ -176,31 +176,42 @@ fn eval_expr<'ctx>(
                 Ok(serde_json::Value::Array(results))
             }
 
-            Expr::Do { key, body } => {
-                // Re-run the body while its `key` field is true; the body always
-                // runs at least once. On exit, hand back the final body object
-                // with the checked field removed (workflow-dsl.md §6.5).
+            Expr::Do {
+                var,
+                body,
+                cond,
+                max,
+            } => {
+                // Cap the loop up front, in the outer scope (workflow-dsl.md §6.5).
+                let max_val = eval_expr(max, env.clone(), ctx, visited.clone()).await?;
+                let cap = max_val.as_f64().ok_or_else(|| {
+                    WorkflowError(format!("do loop `max` must be a number, got {max_val}"))
+                })?;
+                if cap.is_nan() || cap < 1.0 {
+                    return Err(WorkflowError(format!(
+                        "do loop `max` must be at least 1, got {cap}"
+                    )));
+                }
+                // Run the body at least once, then re-run while `cond` holds and
+                // the cap allows. `cond` sees the latest value bound to `var`.
+                let mut count = 0.0;
                 loop {
                     let val = eval_expr(body, env.clone(), ctx, visited.clone()).await?;
-                    let mut obj = match val {
-                        serde_json::Value::Object(map) => map,
-                        other => {
+                    count += 1.0;
+                    if count >= cap {
+                        return Ok(val);
+                    }
+                    let mut cond_env = env.clone();
+                    cond_env.insert(var.clone(), val.clone());
+                    let again = eval_expr(cond, cond_env, ctx, visited.clone()).await?;
+                    match again.as_bool() {
+                        Some(true) => continue,
+                        Some(false) => return Ok(val),
+                        None => {
                             return Err(WorkflowError(format!(
-                                "do loop body must evaluate to an object, got {other}"
+                                "do loop `while` condition must be a bool, got {again}"
                             )))
                         }
-                    };
-                    let more = obj
-                        .get(key)
-                        .and_then(serde_json::Value::as_bool)
-                        .ok_or_else(|| {
-                            WorkflowError(format!(
-                                "do loop body object must have a bool `{key}` field"
-                            ))
-                        })?;
-                    if !more {
-                        obj.remove(key);
-                        return Ok(serde_json::Value::Object(obj));
                     }
                 }
             }

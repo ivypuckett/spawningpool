@@ -114,49 +114,42 @@ fn infers_for_as_array_map() {
 }
 
 #[test]
-fn infers_do_as_body_object_without_flag() {
+fn infers_do_as_body_type_with_var_in_scope_for_while() {
     let t = tool(
         "poll",
         vec![],
-        Some(Type::Object(vec![
-            ("more".to_string(), Type::Bool),
-            ("count".to_string(), Type::Number),
-        ])),
+        Some(Type::Object(vec![("ready".to_string(), Type::Bool)])),
     );
-    let wf = parse("r = do [more] (run tool poll {})").unwrap();
+    // The `while` condition reads `answer`, the value being bound by the loop.
+    let wf = parse("answer = do (run tool poll {}) while (!answer.ready) max (3)").unwrap();
     let env = check(&wf, &empty_registry(), &[t], &HashMap::new()).unwrap();
-    // The loop yields the body object with the checked `more` field removed.
     assert_eq!(
-        env["r"],
-        Type::Object(vec![("count".to_string(), Type::Number)])
+        env["answer"],
+        Type::Object(vec![("ready".to_string(), Type::Bool)])
     );
 }
 
 #[test]
-fn rejects_do_with_missing_flag_field() {
+fn rejects_do_with_non_bool_while() {
     let t = tool(
         "poll",
         vec![],
         Some(Type::Object(vec![("count".to_string(), Type::Number)])),
     );
-    let wf = parse("r = do [more] (run tool poll {})").unwrap();
+    let wf = parse("answer = do (run tool poll {}) while (answer.count) max (3)").unwrap();
     assert!(check(&wf, &empty_registry(), &[t], &HashMap::new()).is_err());
 }
 
 #[test]
-fn rejects_do_with_non_bool_flag() {
-    let t = tool(
-        "poll",
-        vec![],
-        Some(Type::Object(vec![("more".to_string(), Type::Number)])),
-    );
-    let wf = parse("r = do [more] (run tool poll {})").unwrap();
-    assert!(check(&wf, &empty_registry(), &[t], &HashMap::new()).is_err());
+fn rejects_do_with_non_number_max() {
+    let wf = parse(r#"answer = do (1) while (true) max ("lots")"#).unwrap();
+    assert!(check(&wf, &empty_registry(), &[], &HashMap::new()).is_err());
 }
 
 #[test]
-fn rejects_do_with_non_object_body() {
-    let wf = parse("r = do [more] (1)").unwrap();
+fn rejects_do_whose_while_reads_an_undefined_variable() {
+    // Only the assigned `answer` is in scope for the condition; `nope` is not.
+    let wf = parse("answer = do (1) while (nope) max (3)").unwrap();
     assert!(check(&wf, &empty_registry(), &[], &HashMap::new()).is_err());
 }
 

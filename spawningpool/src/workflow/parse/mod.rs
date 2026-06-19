@@ -89,7 +89,14 @@ impl Parser {
     fn parse_statement(&mut self) -> Result<Statement, ParseError> {
         let name = self.expect_ident()?;
         self.expect_token(&Token::Eq)?;
-        let expr = self.parse_expr()?;
+        // `do` is only valid as a statement's whole right-hand side: its `while`
+        // condition refers to the assigned variable, so the loop needs that name.
+        let expr = if self.peek_ident().as_deref() == Some("do") {
+            self.bump();
+            self.parse_do(&name)?
+        } else {
+            self.parse_expr()?
+        };
         Ok(Statement { name, expr })
     }
 
@@ -198,8 +205,11 @@ impl Parser {
                 return self.parse_for();
             }
             Some("do") => {
-                self.bump();
-                return self.parse_do();
+                return Err(ParseError(
+                    "`do` is only valid as the whole right-hand side of an assignment \
+                     (its `while` condition refers to the assigned variable)"
+                        .to_string(),
+                ));
             }
             Some("run") | Some("spawn") => {
                 self.bump();
@@ -282,18 +292,41 @@ impl Parser {
         })
     }
 
-    fn parse_do(&mut self) -> Result<Expr, ParseError> {
-        // do [more] (body_expr) — re-run the body while its `more` field is true.
-        self.expect_token(&Token::LBracket)?;
-        let key = self.expect_ident()?;
-        self.expect_token(&Token::RBracket)?;
-        self.expect_token(&Token::LParen)?;
-        let body = self.parse_expr()?;
-        self.expect_token(&Token::RParen)?;
+    fn parse_do(&mut self, var: &str) -> Result<Expr, ParseError> {
+        // do (body) while (cond) max (n). The `do` keyword is already consumed;
+        // `var` is the assigned name the `cond` may reference.
+        let body = self.parse_parenthesized()?;
+
+        if self.peek_ident().as_deref() != Some("while") {
+            return Err(ParseError(
+                "expected `while (...)` after `do (...)`".to_string(),
+            ));
+        }
+        self.bump();
+        let cond = self.parse_parenthesized()?;
+
+        if self.peek_ident().as_deref() != Some("max") {
+            return Err(ParseError(
+                "expected `max (...)` after `do (...) while (...)`".to_string(),
+            ));
+        }
+        self.bump();
+        let max = self.parse_parenthesized()?;
+
         Ok(Expr::Do {
-            key,
+            var: var.to_string(),
             body: Box::new(body),
+            cond: Box::new(cond),
+            max: Box::new(max),
         })
+    }
+
+    /// Parse a single `( expr )` group, returning the inner expression.
+    fn parse_parenthesized(&mut self) -> Result<Expr, ParseError> {
+        self.expect_token(&Token::LParen)?;
+        let expr = self.parse_expr()?;
+        self.expect_token(&Token::RParen)?;
+        Ok(expr)
     }
 
     fn parse_run(&mut self) -> Result<Expr, ParseError> {
