@@ -197,6 +197,10 @@ impl Parser {
                 self.bump();
                 return self.parse_for();
             }
+            Some("do") => {
+                self.bump();
+                return self.parse_do();
+            }
             Some("run") | Some("spawn") => {
                 self.bump();
                 return self.parse_run();
@@ -274,6 +278,20 @@ impl Parser {
         Ok(Expr::For {
             item,
             array: Box::new(array),
+            body: Box::new(body),
+        })
+    }
+
+    fn parse_do(&mut self) -> Result<Expr, ParseError> {
+        // do [more] (body_expr) — re-run the body while its `more` field is true.
+        self.expect_token(&Token::LBracket)?;
+        let key = self.expect_ident()?;
+        self.expect_token(&Token::RBracket)?;
+        self.expect_token(&Token::LParen)?;
+        let body = self.parse_expr()?;
+        self.expect_token(&Token::RParen)?;
+        Ok(Expr::Do {
+            key,
             body: Box::new(body),
         })
     }

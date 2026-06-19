@@ -114,6 +114,53 @@ fn infers_for_as_array_map() {
 }
 
 #[test]
+fn infers_do_as_body_object_without_flag() {
+    let t = tool(
+        "poll",
+        vec![],
+        Some(Type::Object(vec![
+            ("more".to_string(), Type::Bool),
+            ("count".to_string(), Type::Number),
+        ])),
+    );
+    let wf = parse("r = do [more] (run tool poll {})").unwrap();
+    let env = check(&wf, &empty_registry(), &[t], &HashMap::new()).unwrap();
+    // The loop yields the body object with the checked `more` field removed.
+    assert_eq!(
+        env["r"],
+        Type::Object(vec![("count".to_string(), Type::Number)])
+    );
+}
+
+#[test]
+fn rejects_do_with_missing_flag_field() {
+    let t = tool(
+        "poll",
+        vec![],
+        Some(Type::Object(vec![("count".to_string(), Type::Number)])),
+    );
+    let wf = parse("r = do [more] (run tool poll {})").unwrap();
+    assert!(check(&wf, &empty_registry(), &[t], &HashMap::new()).is_err());
+}
+
+#[test]
+fn rejects_do_with_non_bool_flag() {
+    let t = tool(
+        "poll",
+        vec![],
+        Some(Type::Object(vec![("more".to_string(), Type::Number)])),
+    );
+    let wf = parse("r = do [more] (run tool poll {})").unwrap();
+    assert!(check(&wf, &empty_registry(), &[t], &HashMap::new()).is_err());
+}
+
+#[test]
+fn rejects_do_with_non_object_body() {
+    let wf = parse("r = do [more] (1)").unwrap();
+    assert!(check(&wf, &empty_registry(), &[], &HashMap::new()).is_err());
+}
+
+#[test]
 fn infers_run_tool_output_type() {
     let t = tool(
         "ping",

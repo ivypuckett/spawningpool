@@ -213,6 +213,34 @@ sub-expression is itself a `for`, it likewise accepts one sub-expression, and so
 on for deeper nesting. This is an expression; the common form is `var = foreach
 [item: arr] (...)` (§5).
 
+#### 6.5.1 Conditional repetition (do)
+
+```
+do [more] (expr)
+```
+
+`do` re-runs a single sub-expression until it's told to stop — a `do…while`
+shaped like `for`. There is **no accumulator**: the body sees the same outer
+scope each time (like `for`'s body), so progress comes from the side-effecting
+`run` calls inside it (poll a tool until it reports ready, retry a specialist
+until its answer passes a check). The bracket holds **one name**, not a binding:
+it names a `bool` field the interpreter reads off the body's result.
+
+- The body must evaluate to an **object** that declares that field (here `more`)
+  as a `bool`. The body **always runs at least once**; after each run the field
+  is checked, and the loop **repeats while it's `true`** and stops once it's
+  `false` (continuation polarity — `more` means "go again").
+- The checked field is **dropped on exit** ("unbound after check"): the loop's
+  value is the final body object **without** that field, and its type is the
+  body's object type minus that key. So `do [more] (run tool poll { ... })`,
+  where `poll` outputs `{ "more": bool, "count": number }`, has type
+  `{ "count": number }`.
+
+Like `for`, the body is one sub-expression and nests by that sub-expression
+itself being another construct. **A `do` can loop forever** if the field never
+goes `false`; there is no built-in iteration cap in v1, so the body must
+guarantee its own progress.
+
 ### 6.6 Invocation: `run <kind>`
 
 Tools, specialists, and workflows are all invoked with one verb, `run`, followed

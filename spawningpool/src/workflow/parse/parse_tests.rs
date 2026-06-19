@@ -145,6 +145,23 @@ fn parses_foreach_as_alias_for_for() {
 }
 
 #[test]
+fn parses_do_expression() {
+    let wf = parse("x = do [more] (run tool poll {})").unwrap();
+    assert_eq!(
+        wf.statements[0].expr,
+        Expr::Do {
+            key: "more".to_string(),
+            body: Box::new(Expr::RunTool {
+                tool: "poll".to_string(),
+                args: vec![],
+                recover: vec![],
+                recover_default: None,
+            }),
+        }
+    );
+}
+
+#[test]
 fn parses_run_tool_expression() {
     let wf = parse(r#"w = run tool get_weather { CITY: city }"#).unwrap();
     assert_eq!(

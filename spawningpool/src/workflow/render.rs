@@ -103,6 +103,9 @@ fn free_vars(expr: &Expr, out: &mut BTreeSet<String>) {
             inner.remove(item);
             out.extend(inner);
         }
+        // `do [more]` names a field of the body's object result, not a variable
+        // binding, so nothing is removed from the body's free variables.
+        Expr::Do { body, .. } => free_vars(body, out),
         Expr::RunTool {
             args,
             recover,

@@ -176,6 +176,35 @@ fn eval_expr<'ctx>(
                 Ok(serde_json::Value::Array(results))
             }
 
+            Expr::Do { key, body } => {
+                // Re-run the body while its `key` field is true; the body always
+                // runs at least once. On exit, hand back the final body object
+                // with the checked field removed (workflow-dsl.md §6.5).
+                loop {
+                    let val = eval_expr(body, env.clone(), ctx, visited.clone()).await?;
+                    let mut obj = match val {
+                        serde_json::Value::Object(map) => map,
+                        other => {
+                            return Err(WorkflowError(format!(
+                                "do loop body must evaluate to an object, got {other}"
+                            )))
+                        }
+                    };
+                    let more = obj
+                        .get(key)
+                        .and_then(serde_json::Value::as_bool)
+                        .ok_or_else(|| {
+                            WorkflowError(format!(
+                                "do loop body object must have a bool `{key}` field"
+                            ))
+                        })?;
+                    if !more {
+                        obj.remove(key);
+                        return Ok(serde_json::Value::Object(obj));
+                    }
+                }
+            }
+
             Expr::RunTool {
                 tool,
                 args,

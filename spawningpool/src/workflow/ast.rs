@@ -66,6 +66,12 @@ pub enum Expr {
         array: Box<Expr>,
         body: Box<Expr>,
     },
+    /// Conditional repetition `do [more] (body)` (workflow-dsl.md §6.5). The body
+    /// evaluates to an object carrying a bool field named `key`; the loop re-runs
+    /// the body while that field is `true` and stops once it is `false` (the body
+    /// always runs at least once). The loop's value is the final body object with
+    /// the `key` field removed.
+    Do { key: String, body: Box<Expr> },
     /// Tool run `run tool <name> { KEY: expr, ... }` (workflow-dsl.md §6.6),
     /// with an optional `else` recovery block (§7).
     RunTool {

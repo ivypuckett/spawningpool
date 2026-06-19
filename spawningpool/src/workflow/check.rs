@@ -184,6 +184,34 @@ fn infer(expr: &Expr, env: &TypeEnv, ctx: &Ctx, chain: &[String]) -> Result<Type
             Ok(Type::Array(Box::new(body_ty)))
         }
 
+        Expr::Do { key, body } => {
+            let body_ty = infer(body, env, ctx, chain)?;
+            let fields = match body_ty {
+                Type::Object(fields) => fields,
+                other => {
+                    return Err(TypeError(format!(
+                        "do loop body must be an object with a `{key}` bool field, found `{other}`"
+                    )))
+                }
+            };
+            match fields.iter().find(|(k, _)| k == key) {
+                Some((_, Type::Bool)) => {}
+                Some((_, other)) => {
+                    return Err(TypeError(format!(
+                        "do loop `{key}` field must be bool, found `{other}`"
+                    )))
+                }
+                None => {
+                    return Err(TypeError(format!(
+                        "do loop body object has no `{key}` field to check"
+                    )))
+                }
+            }
+            // The loop yields the body object with the checked field removed.
+            let rest = fields.into_iter().filter(|(k, _)| k != key).collect();
+            Ok(Type::Object(rest))
+        }
+
         Expr::RunTool {
             tool,
             args,

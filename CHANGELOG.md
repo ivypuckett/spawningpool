@@ -35,6 +35,12 @@ itself (parser, type-checker, evaluator) is not included yet.
   block instead recovers it into a value, keyed by the tool's `# exits:` name
   (with `_` as the default). Each arm must produce the tool's `# output:` type,
   and the block must cover every declared non-zero exit or supply `_`.
+- **A `do [more] (body)` loop** (workflow-dsl §6.5.1). Re-runs a single
+  sub-expression — shaped like `for`, with no accumulator — until it's told to
+  stop. The body must yield an object declaring the named `bool` field; the body
+  runs at least once, then repeats while that field is `true`. On exit the field
+  is dropped and the remaining object (its type minus that key) is the loop's
+  value.
 
 ## [0.2.0] - 2026-06-12
 

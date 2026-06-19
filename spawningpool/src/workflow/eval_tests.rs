@@ -176,6 +176,81 @@ async fn evaluates_for_as_map() {
 }
 
 #[tokio::test]
+async fn do_runs_once_and_drops_flag_when_flag_false() {
+    // The body runs at least once; with `more` false it stops immediately and
+    // the loop yields the body object with the `more` field removed.
+    let v = eval_src(r#"r = do [more] ({ "more": false, "n": 5 })"#)
+        .await
+        .unwrap();
+    assert_eq!(v, serde_json::json!({ "n": 5.0 }));
+}
+
+#[tokio::test]
+async fn do_loops_until_flag_false_via_stateful_tool() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let nonce = format!(
+        "{}_{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    );
+    let counter_path = std::env::temp_dir().join(format!("sp_wf_do_cnt_{nonce}"));
+    let script_path = std::env::temp_dir().join(format!("sp_wf_do_{nonce}.sh"));
+
+    // Each call bumps a persisted counter and reports `more` until it hits 3, so
+    // the loop's progress comes from the tool's side effect, not an accumulator.
+    std::fs::write(
+        &script_path,
+        format!(
+            "#!/bin/sh\nn=$(cat {cnt} 2>/dev/null || echo 0)\nn=$((n+1))\necho $n > {cnt}\n\
+             if [ $n -lt 3 ]; then m=true; else m=false; fi\n\
+             printf '{{\"more\":%s,\"count\":%s}}' $m $n > \"$SP_OUTPUT_PATH\"\n",
+            cnt = counter_path.display()
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(&script_path, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+    let tool_def = ToolDef {
+        name: "poll".to_string(),
+        script: script_path.clone(),
+        description: String::new(),
+        params: vec![],
+        output: Some(crate::types::Type::Object(vec![
+            ("more".to_string(), crate::types::Type::Bool),
+            ("count".to_string(), crate::types::Type::Number),
+        ])),
+        exits: vec![],
+    };
+
+    let wf = parse("result = do [more] (run tool poll {})").unwrap();
+    let registry = Registry::default();
+    let client = crate::ai::Client::new();
+    let keys = HashMap::new();
+    let inputs = HashMap::new();
+    let workflows = HashMap::new();
+    let val = eval(
+        &wf,
+        &registry,
+        &[tool_def],
+        &client,
+        &keys,
+        &inputs,
+        &workflows,
+    )
+    .await
+    .unwrap();
+    std::fs::remove_file(&script_path).ok();
+    std::fs::remove_file(&counter_path).ok();
+
+    // Stopped at count 3 (more=false), with the `more` field dropped.
+    assert_eq!(val, serde_json::json!({ "count": 3 }));
+}
+
+#[tokio::test]
 async fn run_tool_runs_script_and_reads_output() {
     use std::os::unix::fs::PermissionsExt;
 
