@@ -11,7 +11,7 @@ This is reference material for the orchestration model. For the surface syntax s
 ## Overview
 
 ```mermaid
-flowchart TD
+graph TD
     user([user prompt]) -->|CLI run| spec["specialist<br/>agentic loop"]
     spec -->|"envelope (JSON) / plaintext stream"| stdout([stdout])
     spec -->|"JSON args → env vars (stringified)"| tool["tool script"]
