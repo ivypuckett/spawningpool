@@ -14,6 +14,16 @@ pub enum BinOp {
     Pow,
     Or,
     And,
+    /// Equality `==` / `!=`. Operands must share a type (any type); result is
+    /// `bool`.
+    Eq,
+    Ne,
+    /// Ordering `<` `<=` `>` `>=`. Operands must both be `number` or both be
+    /// `string`; result is `bool`.
+    Lt,
+    Le,
+    Gt,
+    Ge,
 }
 
 /// Access key used in a member-access chain (workflow-dsl.md §6.7).

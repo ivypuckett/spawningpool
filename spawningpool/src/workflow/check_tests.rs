@@ -71,6 +71,43 @@ fn rejects_type_mismatch_in_add() {
 }
 
 #[test]
+fn infers_bool_from_equality_on_any_same_type() {
+    for src in [
+        "b = 1 == 2",
+        r#"b = "a" != "b""#,
+        "b = true == false",
+        r#"b = { "x": 1 } == { "x": 2 }"#,
+    ] {
+        let wf = parse(src).unwrap();
+        let env = check(&wf, &empty_registry(), &[], &HashMap::new())
+            .unwrap_or_else(|e| panic!("check failed for `{src}`: {e}"));
+        assert_eq!(env["b"], Type::Bool, "for source `{src}`");
+    }
+}
+
+#[test]
+fn rejects_equality_between_different_types() {
+    let wf = parse(r#"b = 1 == "a""#).unwrap();
+    assert!(check(&wf, &empty_registry(), &[], &HashMap::new()).is_err());
+}
+
+#[test]
+fn infers_bool_from_comparison_on_numbers_and_strings() {
+    for src in ["b = 1 < 2", r#"b = "a" >= "b""#] {
+        let wf = parse(src).unwrap();
+        let env = check(&wf, &empty_registry(), &[], &HashMap::new())
+            .unwrap_or_else(|e| panic!("check failed for `{src}`: {e}"));
+        assert_eq!(env["b"], Type::Bool, "for source `{src}`");
+    }
+}
+
+#[test]
+fn rejects_comparison_on_bools() {
+    let wf = parse("b = true < false").unwrap();
+    assert!(check(&wf, &empty_registry(), &[], &HashMap::new()).is_err());
+}
+
+#[test]
 fn infers_object_type_from_literal() {
     let wf = parse(r#"obj = { "x": 1, "ok": true }"#).unwrap();
     let env = check(&wf, &empty_registry(), &[], &HashMap::new()).unwrap();

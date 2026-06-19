@@ -460,6 +460,25 @@ fn infer_binop(op: &BinOp, l: Type, r: Type) -> Result<Type, TypeError> {
                 )))
             }
         }
+        BinOp::Eq | BinOp::Ne => {
+            if l != r {
+                return Err(TypeError(format!(
+                    "operator `{op:?}` requires operands of the same type, found `{l}` and `{r}`"
+                )));
+            }
+            Ok(Type::Bool)
+        }
+        BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge => {
+            let both = |t| l == t && r == t;
+            if both(Type::Number) || both(Type::String) {
+                Ok(Type::Bool)
+            } else {
+                Err(TypeError(format!(
+                    "comparison operator `{op:?}` requires two numbers or two strings, \
+                     found `{l}` and `{r}`"
+                )))
+            }
+        }
         _ => {
             if l != Type::Number || r != Type::Number {
                 return Err(TypeError(format!(

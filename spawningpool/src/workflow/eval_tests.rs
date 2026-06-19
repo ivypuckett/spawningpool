@@ -54,6 +54,48 @@ async fn evaluates_string_concatenation() {
 }
 
 #[tokio::test]
+async fn evaluates_equality_and_comparison() {
+    let cases = [
+        ("x = 1 == 1", true),
+        ("x = 1 == 2", false),
+        ("x = 1 != 2", true),
+        (r#"x = "a" == "a""#, true),
+        (r#"x = "a" != "a""#, false),
+        ("x = true == true", true),
+        ("x = 1 < 2", true),
+        ("x = 2 < 1", false),
+        ("x = 2 <= 2", true),
+        ("x = 3 > 2", true),
+        ("x = 2 >= 3", false),
+        (r#"x = "a" < "b""#, true),
+        (r#"x = "b" < "a""#, false),
+    ];
+    for (src, expected) in cases {
+        let v = eval_src(src)
+            .await
+            .unwrap_or_else(|e| panic!("eval failed for `{src}`: {e}"));
+        assert_eq!(v, serde_json::json!(expected), "for source `{src}`");
+    }
+}
+
+#[tokio::test]
+async fn equality_treats_integer_and_float_as_equal() {
+    // A `# inputs:` number arrives as a JSON integer, while the `1` literal is an
+    // f64; equality must see through the representation difference.
+    let wf = parse("# inputs: N:number\n\nx = N == 1").unwrap();
+    let registry = Registry::default();
+    let client = crate::ai::Client::new();
+    let keys = HashMap::new();
+    let mut inputs = HashMap::new();
+    inputs.insert("N".to_string(), serde_json::json!(1)); // integer representation
+    let workflows = HashMap::new();
+    let v = eval(&wf, &registry, &[], &client, &keys, &inputs, &workflows)
+        .await
+        .unwrap();
+    assert_eq!(v, serde_json::json!(true));
+}
+
+#[tokio::test]
 async fn evaluates_arithmetic() {
     let v = eval_src("x = 2 + 3 * 4").await.unwrap();
     // Left-to-right: (2+3)*4 = 20

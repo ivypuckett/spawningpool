@@ -116,6 +116,12 @@ impl Parser {
                 Some(Token::Caret) => BinOp::Pow,
                 Some(Token::PipePipe) => BinOp::Or,
                 Some(Token::AmpAmp) => BinOp::And,
+                Some(Token::EqEq) => BinOp::Eq,
+                Some(Token::BangEq) => BinOp::Ne,
+                Some(Token::Lt) => BinOp::Lt,
+                Some(Token::Le) => BinOp::Le,
+                Some(Token::Gt) => BinOp::Gt,
+                Some(Token::Ge) => BinOp::Ge,
                 _ => break,
             };
             self.bump();

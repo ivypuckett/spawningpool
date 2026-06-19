@@ -484,6 +484,58 @@ fn eval_binop(
             let rn = num_val(&r, "^")?;
             Ok(serde_json::json!(ln.powf(rn)))
         }
+        BinOp::Eq | BinOp::Ne => {
+            let equal = json_eq(&l, &r);
+            let result = if matches!(op, BinOp::Eq) {
+                equal
+            } else {
+                !equal
+            };
+            Ok(serde_json::Value::Bool(result))
+        }
+        BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge => {
+            let ordering = match (&l, &r) {
+                (serde_json::Value::Number(_), serde_json::Value::Number(_)) => {
+                    num_val(&l, "comparison")?.partial_cmp(&num_val(&r, "comparison")?)
+                }
+                (serde_json::Value::String(a), serde_json::Value::String(b)) => Some(a.cmp(b)),
+                _ => {
+                    return Err(WorkflowError(format!(
+                        "comparison requires two numbers or two strings, got {l} and {r}"
+                    )))
+                }
+            };
+            // A `None` ordering means a NaN operand; per IEEE it compares false
+            // in every direction.
+            let result = match ordering {
+                Some(std::cmp::Ordering::Less) => matches!(op, BinOp::Lt | BinOp::Le),
+                Some(std::cmp::Ordering::Equal) => matches!(op, BinOp::Le | BinOp::Ge),
+                Some(std::cmp::Ordering::Greater) => matches!(op, BinOp::Gt | BinOp::Ge),
+                None => false,
+            };
+            Ok(serde_json::Value::Bool(result))
+        }
+    }
+}
+
+/// Structural equality that compares numbers by their `f64` value, so an integer
+/// `1` from a tool's JSON output equals the `1` literal (always an `f64` here).
+/// serde_json's own `==` distinguishes the integer and float representations, so
+/// it can't be used directly for the DSL's `==`.
+fn json_eq(l: &serde_json::Value, r: &serde_json::Value) -> bool {
+    use serde_json::Value::{Array, Number, Object};
+    match (l, r) {
+        (Number(a), Number(b)) => match (a.as_f64(), b.as_f64()) {
+            (Some(x), Some(y)) => x == y,
+            _ => a == b,
+        },
+        (Array(a), Array(b)) => a.len() == b.len() && a.iter().zip(b).all(|(x, y)| json_eq(x, y)),
+        (Object(a), Object(b)) => {
+            a.len() == b.len()
+                && a.iter()
+                    .all(|(k, v)| b.get(k).is_some_and(|w| json_eq(v, w)))
+        }
+        _ => l == r,
     }
 }
 
