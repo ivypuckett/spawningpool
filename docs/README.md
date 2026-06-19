@@ -5,6 +5,7 @@
 Everything you define lives in one JSON registry on disk; the `spawningpool` CLI is the
 whole interface.
 
+- **[Onboarding: the entity map](onboarding.md)** — the whole mental model on three axes; read this first.
 - **[Quickstart](#quickstart)** — go from nothing to a running specialist below.
 - **[CLI reference](cli.md)** — every command and flag, with copyable examples.
 - **[Writing tools](tools.md)** — turn a script into a tool a specialist can call.
