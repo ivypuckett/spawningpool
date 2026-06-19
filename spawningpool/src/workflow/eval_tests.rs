@@ -10,6 +10,46 @@ fn no_ask(_: &str) -> AskOutcome {
     AskOutcome::Unavailable
 }
 
+/// A log sink that discards every event, for tests that don't inspect logging.
+fn no_log(_: serde_json::Value) {}
+
+/// Evaluate `src` capturing every structured log event, returning the result
+/// alongside the events in emission order.
+async fn eval_capture(
+    name: &str,
+    src: &str,
+    tools: Vec<ToolDef>,
+    workflows: HashMap<String, Workflow>,
+    ask: &AskHandler<'_>,
+) -> (
+    Result<serde_json::Value, WorkflowError>,
+    Vec<serde_json::Value>,
+) {
+    let wf = parse(src).expect("parse failed");
+    let registry = Registry::default();
+    let client = crate::ai::Client::new();
+    let keys = HashMap::new();
+    let inputs = HashMap::new();
+    let events = std::cell::RefCell::new(Vec::new());
+    // Scope the sink so its borrow of `events` ends before we take ownership.
+    let result = {
+        let sink = |e: serde_json::Value| events.borrow_mut().push(e);
+        eval(
+            name, &wf, &registry, &tools, &client, &keys, &inputs, &workflows, ask, &sink,
+        )
+        .await
+    };
+    (result, events.into_inner())
+}
+
+/// The `event` field of each captured event, in order.
+fn event_names(events: &[serde_json::Value]) -> Vec<&str> {
+    events
+        .iter()
+        .map(|e| e["event"].as_str().unwrap())
+        .collect()
+}
+
 async fn eval_src(src: &str) -> Result<serde_json::Value, WorkflowError> {
     let wf = parse(src).expect("parse failed");
     let registry = Registry::default();
@@ -18,6 +58,7 @@ async fn eval_src(src: &str) -> Result<serde_json::Value, WorkflowError> {
     let inputs = HashMap::new();
     let workflows = HashMap::new();
     eval(
+        "test",
         &wf,
         &registry,
         &[],
@@ -26,6 +67,7 @@ async fn eval_src(src: &str) -> Result<serde_json::Value, WorkflowError> {
         &inputs,
         &workflows,
         &no_ask,
+        &no_log,
     )
     .await
 }
@@ -58,6 +100,7 @@ async fn seeds_declared_inputs_into_scope() {
     inputs.insert("CITY".to_string(), serde_json::json!("Portland"));
     let workflows = HashMap::new();
     let v = eval(
+        "test",
         &wf,
         &registry,
         &[],
@@ -66,6 +109,7 @@ async fn seeds_declared_inputs_into_scope() {
         &inputs,
         &workflows,
         &no_ask,
+        &no_log,
     )
     .await
     .unwrap();
@@ -115,6 +159,7 @@ async fn equality_treats_integer_and_float_as_equal() {
     inputs.insert("N".to_string(), serde_json::json!(1)); // integer representation
     let workflows = HashMap::new();
     let v = eval(
+        "test",
         &wf,
         &registry,
         &[],
@@ -123,6 +168,7 @@ async fn equality_treats_integer_and_float_as_equal() {
         &inputs,
         &workflows,
         &no_ask,
+        &no_log,
     )
     .await
     .unwrap();
@@ -200,10 +246,22 @@ async fn evaluates_array_index_access() {
         keys: &keys,
         workflows: &workflows,
         ask: &no_ask,
+        log: &no_log,
     };
-    let val = eval_access(arr, &AccessKey::Index(1), Env::new(), &ctx, Vec::new())
-        .await
-        .unwrap();
+    let frame = Frame {
+        wf: "test",
+        stmt: "val",
+    };
+    let val = eval_access(
+        arr,
+        &AccessKey::Index(1),
+        Env::new(),
+        &ctx,
+        Vec::new(),
+        frame,
+    )
+    .await
+    .unwrap();
     assert_eq!(val, serde_json::json!(20));
 }
 
@@ -240,11 +298,16 @@ async fn evaluates_for_as_map() {
         keys: &keys,
         workflows: &workflows,
         ask: &no_ask,
+        log: &no_log,
     };
 
     let mut last = serde_json::Value::Null;
     for stmt in &wf.statements {
-        let val = eval_expr(&stmt.expr, env.clone(), &ctx, Vec::new())
+        let frame = Frame {
+            wf: "test",
+            stmt: &stmt.name,
+        };
+        let val = eval_expr(&stmt.expr, env.clone(), &ctx, Vec::new(), frame)
             .await
             .unwrap();
         last = val.clone();
@@ -388,6 +451,7 @@ async fn run_tool_runs_script_and_reads_output() {
     let inputs = HashMap::new();
     let workflows = HashMap::new();
     let val = eval(
+        "test",
         &wf,
         &registry,
         &[tool_def],
@@ -396,6 +460,7 @@ async fn run_tool_runs_script_and_reads_output() {
         &inputs,
         &workflows,
         &no_ask,
+        &no_log,
     )
     .await
     .unwrap();
@@ -436,6 +501,7 @@ async fn run_tool_errors_when_sp_output_path_omitted() {
     let inputs = HashMap::new();
     let workflows = HashMap::new();
     let err = eval(
+        "test",
         &wf,
         &registry,
         &[tool_def],
@@ -444,6 +510,7 @@ async fn run_tool_errors_when_sp_output_path_omitted() {
         &inputs,
         &workflows,
         &no_ask,
+        &no_log,
     )
     .await
     .unwrap_err();
@@ -501,6 +568,7 @@ async fn eval_with_tool(src: &str, tool: ToolDef) -> Result<serde_json::Value, W
     let inputs = HashMap::new();
     let workflows = HashMap::new();
     eval(
+        "test",
         &wf,
         &registry,
         &[tool],
@@ -509,6 +577,7 @@ async fn eval_with_tool(src: &str, tool: ToolDef) -> Result<serde_json::Value, W
         &inputs,
         &workflows,
         &no_ask,
+        &no_log,
     )
     .await
 }
@@ -597,6 +666,7 @@ async fn run_nests_a_workflow_passing_inputs() {
     let keys = HashMap::new();
     let inputs = HashMap::new();
     let val = eval(
+        "test",
         &outer,
         &registry,
         &[tool],
@@ -605,6 +675,7 @@ async fn run_nests_a_workflow_passing_inputs() {
         &inputs,
         &workflows,
         &no_ask,
+        &no_log,
     )
     .await
     .unwrap();
@@ -628,6 +699,7 @@ async fn run_detects_a_cycle() {
     let keys = HashMap::new();
     let inputs = HashMap::new();
     let err = eval(
+        "test",
         &a,
         &registry,
         &[],
@@ -636,6 +708,7 @@ async fn run_detects_a_cycle() {
         &inputs,
         &workflows,
         &no_ask,
+        &no_log,
     )
     .await
     .unwrap_err();
@@ -654,6 +727,7 @@ async fn eval_src_with_ask(
     let inputs = HashMap::new();
     let workflows = HashMap::new();
     eval(
+        "test",
         &wf,
         &registry,
         &[],
@@ -662,6 +736,7 @@ async fn eval_src_with_ask(
         &inputs,
         &workflows,
         ask,
+        &no_log,
     )
     .await
 }
@@ -711,4 +786,143 @@ async fn ask_unavailable_without_else_aborts() {
         .await
         .unwrap_err();
     assert!(err.0.contains("ask couldn't be answered"), "{}", err.0);
+}
+
+#[tokio::test]
+async fn logs_workflow_and_tool_lifecycle() {
+    let (tool, script_path) = echo_tool();
+    let (result, events) = eval_capture(
+        "greet",
+        r#"out = run tool echo { NAME: "world" }"#,
+        vec![tool],
+        HashMap::new(),
+        &no_ask,
+    )
+    .await;
+    std::fs::remove_file(&script_path).ok();
+    result.unwrap();
+
+    assert_eq!(
+        event_names(&events),
+        ["workflow.start", "tool.call", "tool.done", "workflow.done"]
+    );
+    assert_eq!(events[0]["wf"], "greet");
+    assert_eq!(events[0]["inputs"], serde_json::json!({}));
+
+    // A workflow `call tool`: no specialist, statement name, typed args.
+    let call = &events[1];
+    assert_eq!(call["wf"], "greet");
+    assert_eq!(call["stmt"], "out");
+    assert!(call["specialist"].is_null());
+    assert_eq!(call["tool"], "echo");
+    assert_eq!(call["args"], serde_json::json!({ "NAME": "world" }));
+
+    let done = &events[2];
+    assert_eq!(done["success"], true);
+    assert_eq!(done["exit_code"], 0);
+    assert!(done["elapsed_ms"].is_number());
+}
+
+#[tokio::test]
+async fn logs_workflow_error_with_tool_exit_code() {
+    let (tool, script_path) = exiting_tool(1); // unhandled non-zero exit -> abort
+    let (result, events) = eval_capture(
+        "pinger",
+        "r = run tool ping {}",
+        vec![tool],
+        HashMap::new(),
+        &no_ask,
+    )
+    .await;
+    std::fs::remove_file(&script_path).ok();
+    result.unwrap_err();
+
+    // The frame opens and closes with an error; the tool's exit is still logged.
+    assert_eq!(
+        event_names(&events),
+        ["workflow.start", "tool.call", "tool.done", "workflow.error"]
+    );
+    let done = &events[2];
+    assert_eq!(done["success"], false);
+    assert_eq!(done["exit_code"], 1);
+    assert_eq!(events[3]["wf"], "pinger");
+    assert!(events[3]["error"].as_str().unwrap().contains("else"));
+}
+
+#[tokio::test]
+async fn logs_sub_workflow_sharing_the_run_with_a_distinct_wf() {
+    let (tool, script_path) = echo_tool();
+    let inner = parse("# inputs: WHO:string\n\nout = run tool echo { NAME: WHO }").unwrap();
+    let mut workflows = HashMap::new();
+    workflows.insert("inner".to_string(), inner);
+
+    let (result, events) = eval_capture(
+        "outer",
+        r#"r = run workflow inner { WHO: "world" }"#,
+        vec![tool],
+        workflows,
+        &no_ask,
+    )
+    .await;
+    std::fs::remove_file(&script_path).ok();
+    result.unwrap();
+
+    // The sub-workflow nests its own start/done; the tool call is tagged `inner`.
+    assert_eq!(
+        event_names(&events),
+        [
+            "workflow.start", // outer
+            "workflow.start", // inner
+            "tool.call",
+            "tool.done",
+            "workflow.done", // inner
+            "workflow.done", // outer
+        ]
+    );
+    assert_eq!(events[0]["wf"], "outer");
+    assert_eq!(events[1]["wf"], "inner");
+    assert_eq!(events[1]["inputs"], serde_json::json!({ "WHO": "world" }));
+    assert_eq!(events[2]["wf"], "inner");
+}
+
+#[tokio::test]
+async fn logs_ask_prompt_and_answer() {
+    let answer = |_: &str| AskOutcome::Answered("Boston".to_string());
+    let (result, events) = eval_capture(
+        "asker",
+        r#"c = ask "Which city?""#,
+        vec![],
+        HashMap::new(),
+        &answer,
+    )
+    .await;
+    result.unwrap();
+
+    assert_eq!(
+        event_names(&events),
+        [
+            "workflow.start",
+            "ask.prompt",
+            "ask.answer",
+            "workflow.done"
+        ]
+    );
+    assert_eq!(events[1]["prompt"], "Which city?");
+    assert_eq!(events[1]["stmt"], "c");
+    assert_eq!(events[2]["answered"], true);
+}
+
+#[tokio::test]
+async fn logs_ask_answer_false_when_unavailable() {
+    let (result, events) = eval_capture(
+        "asker",
+        r#"c = ask "Which city?" else "Portland""#,
+        vec![],
+        HashMap::new(),
+        &no_ask,
+    )
+    .await;
+    result.unwrap();
+    let answer = events.iter().find(|e| e["event"] == "ask.answer").unwrap();
+    assert_eq!(answer["answered"], false);
 }

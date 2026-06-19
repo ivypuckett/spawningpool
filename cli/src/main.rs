@@ -4,6 +4,7 @@
 mod cli;
 mod commands;
 mod display;
+mod log;
 mod tui;
 
 use clap::Parser;

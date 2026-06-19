@@ -15,7 +15,9 @@ use tokio::net::TcpListener;
 
 use spawningpool::ai::{Api, Client, CompleteOptions, Reasoning};
 use spawningpool::types::{Param, Type};
-use spawningpool::{run_specialist, ModelDef, ProviderDef, Registry, Specialist, ToolDef};
+use spawningpool::{
+    run_specialist, ModelDef, ProviderDef, Registry, Specialist, SpecialistLog, ToolDef,
+};
 
 /// Spawn an HTTP/1.1 server that answers each request with the next body in
 /// `bodies`, falling back to `fallback` once the queue drains. Returns the base
@@ -161,6 +163,7 @@ async fn agentic_loop_runs_a_tool_then_settles_on_an_answer() {
         &[greet],
         &CompleteOptions::default(),
         &mut |e| events.push(format!("{e:?}")),
+        None,
     )
     .await;
     std::fs::remove_file(&script).ok();
@@ -174,6 +177,87 @@ async fn agentic_loop_runs_a_tool_then_settles_on_an_answer() {
         .any(|e| e.contains("ToolRan") && e.contains("greeted world")));
     // The run ended on the model's final text answer.
     assert!(events.iter().any(|e| e.contains(r#"Text("All greeted.")"#)));
+}
+
+#[tokio::test]
+async fn logs_specialist_lifecycle_with_its_tool_calls() {
+    let (greet, script) = echo_tool("greet", "greeted");
+    let answer = final_answer_body("All greeted.");
+    let (base_url, _hits) = mock_seq(vec![tool_call_body("greet"), answer.clone()], answer).await;
+    let registry = registry_at(base_url);
+    let spec = specialist("greeter", vec!["greet".into()], None);
+
+    // Capture structured log events as compact JSON lines (the test crate has no
+    // serde_json dependency, so we inspect the rendered text).
+    let log: std::cell::RefCell<Vec<String>> = std::cell::RefCell::new(Vec::new());
+    let sink = |e| log.borrow_mut().push(format!("{e}"));
+    let spec_log = SpecialistLog {
+        sink: &sink,
+        wf: Some("flow"),
+        stmt: Some("res"),
+    };
+
+    run_specialist(
+        &Client::new(),
+        &registry,
+        &spec,
+        "say hi",
+        &[greet],
+        &CompleteOptions::default(),
+        &mut |_| {},
+        Some(&spec_log),
+    )
+    .await
+    .unwrap();
+    std::fs::remove_file(&script).ok();
+
+    let events = log.into_inner();
+    // start, the specialist's own tool call/done, then done — in that order.
+    let kinds: Vec<&str> = events
+        .iter()
+        .filter_map(|e| {
+            [
+                "specialist.start",
+                "tool.call",
+                "tool.done",
+                "specialist.done",
+            ]
+            .into_iter()
+            .find(|k| e.contains(&format!("\"event\":\"{k}\"")))
+        })
+        .collect();
+    assert_eq!(
+        kinds,
+        [
+            "specialist.start",
+            "tool.call",
+            "tool.done",
+            "specialist.done"
+        ]
+    );
+
+    // The events carry the invocation's workflow/statement context and identity.
+    let start = &events[0];
+    assert!(start.contains("\"wf\":\"flow\""));
+    assert!(start.contains("\"stmt\":\"res\""));
+    assert!(start.contains("\"specialist\":\"greeter\""));
+
+    // The tool call is scoped to the specialist and names the tool it invoked.
+    let call = events.iter().find(|e| e.contains("tool.call")).unwrap();
+    assert!(call.contains("\"specialist\":\"greeter\""));
+    assert!(call.contains("\"tool\":\"greet\""));
+
+    let done = events.iter().find(|e| e.contains("tool.done")).unwrap();
+    assert!(done.contains("\"success\":true"));
+    assert!(done.contains("\"exit_code\":0"));
+
+    // specialist.done aggregates the run: two turns, settled on a stop reason.
+    let spec_done = events
+        .iter()
+        .find(|e| e.contains("specialist.done"))
+        .unwrap();
+    assert!(spec_done.contains("\"turns\":2"));
+    assert!(spec_done.contains("\"stop_reason\":"));
 }
 
 #[tokio::test]
@@ -193,6 +277,7 @@ async fn agentic_loop_stops_after_max_turns() {
         &[greet],
         &CompleteOptions::default(),
         &mut |_| {},
+        None,
     )
     .await
     .unwrap_err();
@@ -222,6 +307,7 @@ async fn constrained_specialist_makes_exactly_one_forced_call() {
         &[classify],
         &spec.complete_options(),
         &mut |e| events.push(format!("{e:?}")),
+        None,
     )
     .await
     .unwrap();

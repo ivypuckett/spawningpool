@@ -104,6 +104,8 @@ fn run_tool_call_returns_result_on_success_and_reports_output() {
         "greet",
         &serde_json::json!({ "NAME": "world" }),
         &mut |e| events.push(format!("{e:?}")),
+        None,
+        "tester",
     );
     std::fs::remove_file(&script).ok();
     match block {
@@ -128,7 +130,15 @@ fn run_tool_call_returns_result_on_success_and_reports_output() {
 fn run_tool_call_returns_error_on_nonzero_exit() {
     let script = write_script("#!/bin/sh\necho boom >&2\nexit 1\n");
     let tools = vec![tool("fail", script.clone())];
-    let block = run_tool_call(&tools, "id2", "fail", &serde_json::json!({}), &mut |_| {});
+    let block = run_tool_call(
+        &tools,
+        "id2",
+        "fail",
+        &serde_json::json!({}),
+        &mut |_| {},
+        None,
+        "tester",
+    );
     std::fs::remove_file(&script).ok();
     match block {
         ContentBlock::ToolResult {
@@ -144,11 +154,19 @@ fn run_tool_call_returns_error_on_nonzero_exit() {
 #[test]
 fn run_tool_call_reports_unknown_tool_as_error() {
     let mut failed = false;
-    let block = run_tool_call(&[], "id3", "ghost", &serde_json::json!({}), &mut |e| {
-        if matches!(e, RunEvent::ToolFailed { .. }) {
-            failed = true;
-        }
-    });
+    let block = run_tool_call(
+        &[],
+        "id3",
+        "ghost",
+        &serde_json::json!({}),
+        &mut |e| {
+            if matches!(e, RunEvent::ToolFailed { .. }) {
+                failed = true;
+            }
+        },
+        None,
+        "tester",
+    );
     match block {
         ContentBlock::ToolResult {
             tool_call_id,
@@ -177,6 +195,8 @@ fn run_tool_call_enriches_launch_failure_with_remediation() {
         "ghost_script",
         &serde_json::json!({}),
         &mut |_| {},
+        None,
+        "tester",
     );
     match block {
         ContentBlock::ToolResult {

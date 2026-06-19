@@ -15,6 +15,7 @@ use crate::ai::{
     Usage,
 };
 use crate::domain::{Registry, Specialist, ToolDef};
+use crate::log::{self, SpecialistLog};
 
 /// Cap on agentic turns, so a specialist that keeps calling tools without ever
 /// settling on an answer terminates instead of looping forever.
@@ -54,6 +55,11 @@ pub enum RunEvent<'a> {
 /// also the only tools its calls can name. Progress is reported through
 /// `observer`; `opts` carries the request options, including any API key the
 /// caller has sourced.
+///
+/// `log`, when `Some`, brackets the invocation with `specialist.start` /
+/// `specialist.done` structured events and records each tool the specialist
+/// calls (docs/workflow-logging.md); `None` disables that layer.
+#[allow(clippy::too_many_arguments)]
 pub async fn run_specialist(
     client: &Client,
     registry: &Registry,
@@ -62,6 +68,7 @@ pub async fn run_specialist(
     tools: &[ToolDef],
     opts: &CompleteOptions,
     observer: &mut dyn FnMut(RunEvent<'_>),
+    log: Option<&SpecialistLog<'_>>,
 ) -> Result<(), String> {
     let model = registry.resolve_model(specialist)?;
     let mut ctx = build_context(specialist, prompt, tools);
@@ -74,9 +81,31 @@ pub async fn run_specialist(
     // a non-streaming turn when it's in play.
     let stream = specialist.stream && !opts.constrained_decoding;
 
+    if let Some(log) = log {
+        log.emit(log::specialist_start(
+            log.wf,
+            log.stmt,
+            &specialist.name,
+            &specialist.model,
+            prompt,
+        ));
+    }
+    // Aggregate metadata for `specialist.done`: an invocation is atomic from the
+    // workflow's view, so per-turn token and stop-reason data is summed here.
+    let started = std::time::Instant::now();
+    let mut turns = 0u32;
+    let mut input_tokens = 0u32;
+    let mut output_tokens = 0u32;
+    let mut last_stop = StopReason::Stop;
+
+    let mut settled = false;
     for _ in 0..MAX_TURNS {
         let (message, usage, stop_reason) =
             one_turn(client, &model, &ctx, opts, stream, observer).await?;
+        turns += 1;
+        input_tokens += usage.input;
+        output_tokens += usage.output;
+        last_stop = stop_reason;
         observer(RunEvent::TurnDone { stop_reason });
         observer(RunEvent::Usage(usage));
 
@@ -95,17 +124,27 @@ pub async fn run_specialist(
 
         // No tool calls means the model produced its final answer.
         if calls.is_empty() {
-            return Ok(());
+            settled = true;
+            break;
         }
 
         let mut results = Vec::with_capacity(calls.len());
         for (id, tool_name, arguments) in &calls {
-            results.push(run_tool_call(tools, id, tool_name, arguments, observer));
+            results.push(run_tool_call(
+                tools,
+                id,
+                tool_name,
+                arguments,
+                observer,
+                log,
+                &specialist.name,
+            ));
         }
 
         // The constraint guaranteed exactly one call; once executed, we're done.
         if !agentic {
-            return Ok(());
+            settled = true;
+            break;
         }
 
         // Feed the assistant's turn and the tool results back, then loop.
@@ -114,6 +153,22 @@ pub async fn run_specialist(
             role: Role::User,
             content: results,
         });
+    }
+
+    if settled {
+        if let Some(log) = log {
+            log.emit(log::specialist_done(
+                log.wf,
+                log.stmt,
+                &specialist.name,
+                last_stop,
+                turns,
+                input_tokens,
+                output_tokens,
+                started.elapsed().as_millis() as u64,
+            ));
+        }
+        return Ok(());
     }
 
     Err(format!(
@@ -185,14 +240,43 @@ fn build_context(specialist: &Specialist, prompt: &str, tools: &[ToolDef]) -> Co
 /// Execute one tool call by running its backing script, report the outcome
 /// through `observer`, and return the [`ContentBlock::ToolResult`] to feed back
 /// to the model. A failed or unknown tool becomes a tool error so the model can
-/// react.
+/// react. When `log` is `Some`, the attempt is bracketed with `tool.call` /
+/// `tool.done` events scoped to the specialist (docs/workflow-logging.md): a
+/// launched script reports its exit code, while an unknown tool or a launch
+/// failure reports `exit_code: null`.
 fn run_tool_call(
     tools: &[ToolDef],
     id: &str,
     tool_name: &str,
     arguments: &serde_json::Value,
     observer: &mut dyn FnMut(RunEvent<'_>),
+    log: Option<&SpecialistLog<'_>>,
+    specialist: &str,
 ) -> ContentBlock {
+    if let Some(log) = log {
+        log.emit(log::tool_call(
+            log.wf,
+            log.stmt,
+            Some(specialist),
+            tool_name,
+            arguments,
+        ));
+    }
+    let started = std::time::Instant::now();
+    let done = |log: Option<&SpecialistLog<'_>>, success: bool, exit_code: Option<i32>| {
+        if let Some(log) = log {
+            log.emit(log::tool_done(
+                log.wf,
+                log.stmt,
+                Some(specialist),
+                tool_name,
+                success,
+                exit_code,
+                started.elapsed().as_millis() as u64,
+            ));
+        }
+    };
+
     let tool = match tools.iter().find(|t| t.name == tool_name) {
         Some(tool) => tool,
         None => {
@@ -201,6 +285,7 @@ fn run_tool_call(
                 name: tool_name,
                 message: &message,
             });
+            done(log, false, None);
             return ContentBlock::tool_error(id, message);
         }
     };
@@ -213,6 +298,7 @@ fn run_tool_call(
                 output: &run.output,
                 success: run.success,
             });
+            done(log, run.success, run.code);
             if run.success {
                 ContentBlock::tool_result(id, run.output)
             } else {
@@ -229,6 +315,7 @@ fn run_tool_call(
                 name: tool_name,
                 message: &message,
             });
+            done(log, false, None);
             ContentBlock::tool_error(id, message)
         }
     }
