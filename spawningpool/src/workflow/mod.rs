@@ -38,7 +38,11 @@
 //! let inputs = spawningpool::workflow::resolve_inputs(&workflow.inputs, &HashMap::new())?;
 //! // No `ask` here; a headless handler (always `Unavailable`) suffices.
 //! let ask = |_: &str| spawningpool::workflow::AskOutcome::Unavailable;
-//! let result = eval(&workflow, &registry, &tools, &client, &keys, &inputs, &workflows, &ask).await?;
+//! // A no-op log sink disables structured logging (docs/workflow-logging.md).
+//! let log = |_event| {};
+//! let result = eval(
+//!     "example", &workflow, &registry, &tools, &client, &keys, &inputs, &workflows, &ask, &log,
+//! ).await?;
 //! println!("{result}");
 //! # Ok(())
 //! # }

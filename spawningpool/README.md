@@ -81,6 +81,7 @@ async fn main() -> Result<(), String> {
         &resolved,
         &opts,
         &mut observer,
+        None, // no structured logging in this minimal example
     )
     .await
 }

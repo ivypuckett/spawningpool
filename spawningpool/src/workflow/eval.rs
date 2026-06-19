@@ -11,6 +11,7 @@ use futures::future::LocalBoxFuture;
 
 use crate::ai::Client;
 use crate::domain::{Registry, ToolDef};
+use crate::log::{self, LogSink, SpecialistLog};
 
 use super::ast::{AccessKey, BinOp, Expr, Workflow};
 use super::collector::Collector;
@@ -54,9 +55,21 @@ struct EvalCtx<'a> {
     keys: &'a HashMap<String, String>,
     workflows: &'a HashMap<String, Workflow>,
     ask: &'a AskHandler<'a>,
+    log: &'a LogSink<'a>,
 }
 
 type Env = HashMap<String, serde_json::Value>;
+
+/// The logging context for the expression currently being evaluated: the name of
+/// the workflow frame and the statement variable being assigned. Threaded
+/// unchanged through an expression's sub-evaluations so any `tool.*`,
+/// `specialist.*`, or `ask.*` event nested inside it carries the right `wf`/`stmt`
+/// (docs/workflow-logging.md).
+#[derive(Clone, Copy)]
+struct Frame<'a> {
+    wf: &'a str,
+    stmt: &'a str,
+}
 
 /// Evaluate a workflow, executing its statements in order.
 ///
@@ -71,12 +84,16 @@ type Env = HashMap<String, serde_json::Value>;
 /// parsed AST; an empty map is fine for a workflow that never uses `run`. `ask`
 /// handles each `ask` expression (workflow-dsl.md §6.8): given the prompt, it
 /// returns the user's [`AskOutcome`]; a handler that always returns
-/// [`AskOutcome::Unavailable`] models a headless run.
+/// [`AskOutcome::Unavailable`] models a headless run. `name` is the root
+/// workflow's name, used as the `wf` field of its log events. `log` records the
+/// run's structured events (docs/workflow-logging.md); a no-op sink disables
+/// logging.
 ///
 /// Returns the value produced by the last statement, or `Null` if the workflow
 /// has no statements. Tool and specialist outputs compose through JSON values.
 #[allow(clippy::too_many_arguments)]
 pub async fn eval(
+    name: &str,
     workflow: &Workflow,
     registry: &Registry,
     tools: &[ToolDef],
@@ -85,6 +102,7 @@ pub async fn eval(
     inputs: &HashMap<String, serde_json::Value>,
     workflows: &HashMap<String, Workflow>,
     ask: &AskHandler<'_>,
+    log: &LogSink<'_>,
 ) -> Result<serde_json::Value, WorkflowError> {
     let ctx = EvalCtx {
         registry,
@@ -93,39 +111,71 @@ pub async fn eval(
         keys,
         workflows,
         ask,
+        log,
     };
-    eval_workflow(workflow, &ctx, inputs, Vec::new()).await
+    eval_workflow(name, workflow, &ctx, inputs, Vec::new()).await
 }
 
 /// Evaluate one workflow's statements in order, seeded with `inputs`, returning
-/// the last statement's value (or `Null` when there are none). `visited` is the
-/// stack of `run`-nested workflow names in progress, so a cycle is caught rather
-/// than recursing forever.
+/// the last statement's value (or `Null` when there are none). `name` is the
+/// workflow's name (the `wf` field of its log events). `visited` is the stack of
+/// `run`-nested workflow names in progress, so a cycle is caught rather than
+/// recursing forever.
+///
+/// The frame is bracketed by a `workflow.start` and exactly one terminal
+/// `workflow.done` / `workflow.error` event; a failing sub-workflow therefore
+/// logs its own `workflow.error` and so does each frame above it.
 async fn eval_workflow<'a>(
+    name: &'a str,
     workflow: &'a Workflow,
     ctx: &'a EvalCtx<'a>,
     inputs: &HashMap<String, serde_json::Value>,
     visited: Vec<String>,
 ) -> Result<serde_json::Value, WorkflowError> {
+    let started = std::time::Instant::now();
+    let inputs_obj = serde_json::Value::Object(inputs.clone().into_iter().collect());
+    (ctx.log)(log::workflow_start(name, &inputs_obj));
+
     let mut env: Env = inputs.clone();
     let mut last = serde_json::Value::Null;
 
     for stmt in &workflow.statements {
-        let val = eval_expr(&stmt.expr, env.clone(), ctx, visited.clone()).await?;
+        let frame = Frame {
+            wf: name,
+            stmt: &stmt.name,
+        };
+        let val = match eval_expr(&stmt.expr, env.clone(), ctx, visited.clone(), frame).await {
+            Ok(val) => val,
+            Err(e) => {
+                (ctx.log)(log::workflow_error(
+                    name,
+                    started.elapsed().as_millis() as u64,
+                    &e.0,
+                ));
+                return Err(e);
+            }
+        };
         last = val.clone();
         env.insert(stmt.name.clone(), val);
     }
 
+    (ctx.log)(log::workflow_done(
+        name,
+        started.elapsed().as_millis() as u64,
+    ));
     Ok(last)
 }
 
 /// Evaluate a single expression. Uses [`LocalBoxFuture`] to support recursive
-/// async evaluation without infinite type expansion.
+/// async evaluation without infinite type expansion. `frame` carries the
+/// workflow/statement logging context for any event the expression emits, and is
+/// passed unchanged into its sub-evaluations.
 fn eval_expr<'ctx>(
     expr: &'ctx Expr,
     env: Env,
     ctx: &'ctx EvalCtx<'ctx>,
     visited: Vec<String>,
+    frame: Frame<'ctx>,
 ) -> LocalBoxFuture<'ctx, Result<serde_json::Value, WorkflowError>> {
     Box::pin(async move {
         match expr {
@@ -138,7 +188,7 @@ fn eval_expr<'ctx>(
             Expr::Object(fields) => {
                 let mut map = serde_json::Map::new();
                 for (k, v_expr) in fields {
-                    let val = eval_expr(v_expr, env.clone(), ctx, visited.clone()).await?;
+                    let val = eval_expr(v_expr, env.clone(), ctx, visited.clone(), frame).await?;
                     map.insert(k.clone(), val);
                 }
                 Ok(serde_json::Value::Object(map))
@@ -150,7 +200,7 @@ fn eval_expr<'ctx>(
                 .ok_or_else(|| WorkflowError(format!("undefined variable `{name}`"))),
 
             Expr::Not(inner) => {
-                let val = eval_expr(inner, env, ctx, visited.clone()).await?;
+                let val = eval_expr(inner, env, ctx, visited.clone(), frame).await?;
                 let b = val.as_bool().ok_or_else(|| {
                     WorkflowError(format!("operator `!` requires bool, got {val}"))
                 })?;
@@ -158,34 +208,35 @@ fn eval_expr<'ctx>(
             }
 
             Expr::BinOp { op, lhs, rhs } => {
-                let l = eval_expr(lhs, env.clone(), ctx, visited.clone()).await?;
-                let r = eval_expr(rhs, env, ctx, visited.clone()).await?;
+                let l = eval_expr(lhs, env.clone(), ctx, visited.clone(), frame).await?;
+                let r = eval_expr(rhs, env, ctx, visited.clone(), frame).await?;
                 eval_binop(op, l, r)
             }
 
             Expr::Access { base, keys } => {
-                let mut val = eval_expr(base, env.clone(), ctx, visited.clone()).await?;
+                let mut val = eval_expr(base, env.clone(), ctx, visited.clone(), frame).await?;
                 for key in keys {
-                    val = eval_access(val, key, env.clone(), ctx, visited.clone()).await?;
+                    val = eval_access(val, key, env.clone(), ctx, visited.clone(), frame).await?;
                 }
                 Ok(val)
             }
 
             Expr::If { branches, default } => {
                 for (cond, result) in branches {
-                    let cond_val = eval_expr(cond, env.clone(), ctx, visited.clone()).await?;
+                    let cond_val =
+                        eval_expr(cond, env.clone(), ctx, visited.clone(), frame).await?;
                     let b = cond_val.as_bool().ok_or_else(|| {
                         WorkflowError(format!("if condition must be bool, got {cond_val}"))
                     })?;
                     if b {
-                        return eval_expr(result, env, ctx, visited.clone()).await;
+                        return eval_expr(result, env, ctx, visited.clone(), frame).await;
                     }
                 }
-                eval_expr(default, env, ctx, visited.clone()).await
+                eval_expr(default, env, ctx, visited.clone(), frame).await
             }
 
             Expr::For { item, array, body } => {
-                let arr_val = eval_expr(array, env.clone(), ctx, visited.clone()).await?;
+                let arr_val = eval_expr(array, env.clone(), ctx, visited.clone(), frame).await?;
                 let elements = arr_val
                     .as_array()
                     .ok_or_else(|| {
@@ -196,7 +247,7 @@ fn eval_expr<'ctx>(
                 for element in elements {
                     let mut inner_env = env.clone();
                     inner_env.insert(item.clone(), element);
-                    let result = eval_expr(body, inner_env, ctx, visited.clone()).await?;
+                    let result = eval_expr(body, inner_env, ctx, visited.clone(), frame).await?;
                     results.push(result);
                 }
                 Ok(serde_json::Value::Array(results))
@@ -209,7 +260,7 @@ fn eval_expr<'ctx>(
                 max,
             } => {
                 // Cap the loop up front, in the outer scope (workflow-dsl.md §6.5).
-                let max_val = eval_expr(max, env.clone(), ctx, visited.clone()).await?;
+                let max_val = eval_expr(max, env.clone(), ctx, visited.clone(), frame).await?;
                 let cap = max_val.as_f64().ok_or_else(|| {
                     WorkflowError(format!("do loop `max` must be a number, got {max_val}"))
                 })?;
@@ -222,14 +273,14 @@ fn eval_expr<'ctx>(
                 // the cap allows. `cond` sees the latest value bound to `var`.
                 let mut count = 0.0;
                 loop {
-                    let val = eval_expr(body, env.clone(), ctx, visited.clone()).await?;
+                    let val = eval_expr(body, env.clone(), ctx, visited.clone(), frame).await?;
                     count += 1.0;
                     if count >= cap {
                         return Ok(val);
                     }
                     let mut cond_env = env.clone();
                     cond_env.insert(var.clone(), val.clone());
-                    let again = eval_expr(cond, cond_env, ctx, visited.clone()).await?;
+                    let again = eval_expr(cond, cond_env, ctx, visited.clone(), frame).await?;
                     match again.as_bool() {
                         Some(true) => continue,
                         Some(false) => return Ok(val),
@@ -254,17 +305,54 @@ fn eval_expr<'ctx>(
                     .find(|t| t.name == *tool)
                     .ok_or_else(|| WorkflowError(format!("unknown tool `{tool}`")))?;
 
+                // Collect the evaluated arguments both as the `KEY=value` env
+                // vars the script consumes and, for the log, as a typed object
+                // (before the string lowering) so `tool.call` shows real values.
                 let mut vars = HashMap::new();
+                let mut arg_obj = serde_json::Map::new();
                 for (key, val_expr) in args {
-                    let val = eval_expr(val_expr, env.clone(), ctx, visited.clone()).await?;
+                    let val = eval_expr(val_expr, env.clone(), ctx, visited.clone(), frame).await?;
                     let s = match &val {
                         serde_json::Value::String(s) => s.clone(),
                         other => other.to_string(),
                     };
                     vars.insert(key.clone(), s);
+                    arg_obj.insert(key.clone(), val);
                 }
 
-                let run = crate::run_script(&tool_def.script, &vars)
+                (ctx.log)(log::tool_call(
+                    Some(frame.wf),
+                    Some(frame.stmt),
+                    None,
+                    tool,
+                    &serde_json::Value::Object(arg_obj),
+                ));
+                let started = std::time::Instant::now();
+                let run_result = crate::run_script(&tool_def.script, &vars);
+                let elapsed_ms = started.elapsed().as_millis() as u64;
+                match &run_result {
+                    Ok(run) => (ctx.log)(log::tool_done(
+                        Some(frame.wf),
+                        Some(frame.stmt),
+                        None,
+                        tool,
+                        run.success,
+                        run.code,
+                        elapsed_ms,
+                    )),
+                    // A launch failure has no exit code (script not executable,
+                    // missing shebang, or path not found) — `exit_code: null`.
+                    Err(_) => (ctx.log)(log::tool_done(
+                        Some(frame.wf),
+                        Some(frame.stmt),
+                        None,
+                        tool,
+                        false,
+                        None,
+                        elapsed_ms,
+                    )),
+                }
+                let run = run_result
                     .map_err(|e| WorkflowError(format!("failed to run tool `{tool}`: {e}")))?;
 
                 // A non-zero exit (workflow-dsl.md §7) is recovered by the `else`
@@ -279,7 +367,7 @@ fn eval_expr<'ctx>(
                         .map(|(_, arm)| arm)
                         .or(recover_default.as_deref());
                     return match arm {
-                        Some(arm) => eval_expr(arm, env, ctx, visited.clone()).await,
+                        Some(arm) => eval_expr(arm, env, ctx, visited.clone(), frame).await,
                         None => Err(WorkflowError(format!(
                             "tool `{tool}` exited with {} and no `else` arm handles it",
                             match run.code {
@@ -306,7 +394,7 @@ fn eval_expr<'ctx>(
                 specialist: spec_name,
                 prompt,
             } => {
-                let prompt_val = eval_expr(prompt, env, ctx, visited.clone()).await?;
+                let prompt_val = eval_expr(prompt, env, ctx, visited.clone(), frame).await?;
                 let prompt_str = prompt_val.as_str().ok_or_else(|| {
                     WorkflowError(format!(
                         "specialist prompt must be a string, got {prompt_val}"
@@ -348,6 +436,13 @@ fn eval_expr<'ctx>(
                     spec_opts.constrained_decoding = provider.constrained_decoding;
                 }
 
+                // Route the specialist's own `specialist.*` / `tool.*` events to
+                // this run's sink, tagged with the current workflow/statement.
+                let spec_log = SpecialistLog {
+                    sink: ctx.log,
+                    wf: Some(frame.wf),
+                    stmt: Some(frame.stmt),
+                };
                 let mut collected = Collector::default();
                 crate::run::run_specialist(
                     ctx.client,
@@ -357,6 +452,7 @@ fn eval_expr<'ctx>(
                     &spec_tools,
                     &spec_opts,
                     &mut |event| collected.observe(event),
+                    Some(&spec_log),
                 )
                 .await
                 .map_err(|e| WorkflowError(format!("specialist `{spec_name}` failed: {e}")))?;
@@ -365,17 +461,31 @@ fn eval_expr<'ctx>(
             }
 
             Expr::Ask { prompt, fallback } => {
-                let prompt_val = eval_expr(prompt, env.clone(), ctx, visited.clone()).await?;
+                let prompt_val =
+                    eval_expr(prompt, env.clone(), ctx, visited.clone(), frame).await?;
                 let prompt_str = prompt_val.as_str().ok_or_else(|| {
                     WorkflowError(format!("ask prompt must be a string, got {prompt_val}"))
                 })?;
 
-                match (ctx.ask)(prompt_str) {
+                (ctx.log)(log::ask_prompt(
+                    Some(frame.wf),
+                    Some(frame.stmt),
+                    prompt_str,
+                ));
+                let outcome = (ctx.ask)(prompt_str);
+                (ctx.log)(log::ask_answer(
+                    Some(frame.wf),
+                    Some(frame.stmt),
+                    matches!(outcome, AskOutcome::Answered(_)),
+                ));
+                match outcome {
                     // In-band: the reply is ordinary string data (incl. "").
                     AskOutcome::Answered(answer) => Ok(serde_json::Value::String(answer)),
                     // Out-of-band: recover with the `else` fallback, or abort.
                     AskOutcome::Unavailable => match fallback {
-                        Some(fallback) => eval_expr(fallback, env, ctx, visited.clone()).await,
+                        Some(fallback) => {
+                            eval_expr(fallback, env, ctx, visited.clone(), frame).await
+                        }
                         None => Err(WorkflowError(format!(
                             "ask couldn't be answered (headless run or cancelled) \
                              and has no `else` fallback: {prompt_str}"
@@ -398,7 +508,7 @@ fn eval_expr<'ctx>(
                 // env vars the way `run tool` passes them.
                 let mut sub_inputs = HashMap::new();
                 for (key, val_expr) in args {
-                    let val = eval_expr(val_expr, env.clone(), ctx, visited.clone()).await?;
+                    let val = eval_expr(val_expr, env.clone(), ctx, visited.clone(), frame).await?;
                     sub_inputs.insert(key.clone(), val);
                 }
 
@@ -410,7 +520,7 @@ fn eval_expr<'ctx>(
                 }
                 let mut chain = visited.clone();
                 chain.push(wf_name.clone());
-                eval_workflow(callee, ctx, &sub_inputs, chain).await
+                eval_workflow(wf_name, callee, ctx, &sub_inputs, chain).await
             }
         }
     })
@@ -423,6 +533,7 @@ fn eval_access<'ctx>(
     env: Env,
     ctx: &'ctx EvalCtx<'ctx>,
     visited: Vec<String>,
+    frame: Frame<'ctx>,
 ) -> LocalBoxFuture<'ctx, Result<serde_json::Value, WorkflowError>> {
     Box::pin(async move {
         match key {
@@ -444,7 +555,7 @@ fn eval_access<'ctx>(
                 ))),
             },
             AccessKey::Computed(expr) => {
-                let idx = eval_expr(expr, env, ctx, visited.clone()).await?;
+                let idx = eval_expr(expr, env, ctx, visited.clone(), frame).await?;
                 match val {
                     serde_json::Value::Array(arr) => {
                         let i = idx.as_u64().ok_or_else(|| {

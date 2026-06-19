@@ -1,14 +1,20 @@
 # Workflow logging
 
 Structured observability for harness refinement, retrospective analysis, and
-communicating run state to the user. Not yet implemented — this document
-records the agreed format so implementation is unambiguous.
+communicating run state to the user.
 
 ## Format: NDJSON
 
 One JSON object per line, emitted in execution order to a log stream (destination
 is a deployment decision; the format is independent of it). Every event is
 self-contained and parseable with `jq` without context from surrounding lines.
+Key order within a line is not significant.
+
+The CLI writes the stream to `logs/<datestamp>-<root>.ndjson` in the working
+directory, one file per invocation, where `<root>` is the root workflow name (or
+the specialist name for a bare `spawningpool run specialist`). The library itself
+is destination-agnostic: it emits events to an injected sink
+([`spawningpool::LogSink`]) that stamps each line's `ts` and `run`.
 
 ## Universal fields
 
@@ -52,7 +58,10 @@ the agentic loop is an implementation detail, not a declarative unit. `turns`
 in `specialist.done` is aggregate metadata (the same count that appears in the
 result envelope), not a log of state transitions.
 
-`input_tokens` and `output_tokens` are summed across all turns.
+`input_tokens` and `output_tokens` are summed across all turns. `stop_reason` is
+the run's normalized stop reason, serialized snake_case (`stop`, `length`,
+`tool_use`, `refusal`, `error`) — a specialist that settles on a final answer
+reports `stop`.
 
 ### Tool calls
 
@@ -68,9 +77,10 @@ agentic loop (`specialist: "<name>"`). Tool calls are the finest meaningful
 grain — they represent explicit acts regardless of which turn of the loop
 triggered them.
 
-`exit_code: null` on a failed `tool.done` means the script failed to launch
-(not executable, missing shebang, or path not found), as distinct from a
-non-zero exit.
+`exit_code: null` on a failed `tool.done` means the script never ran to an exit
+code: it failed to launch (not executable, missing shebang, or path not found),
+the specialist named a tool that doesn't exist, or a signal killed it — as
+distinct from a non-zero exit.
 
 ### Ask
 
@@ -102,7 +112,7 @@ content to a specialist that calls `search` once before settling:
 {"ts":"2026-06-19T14:23:01.893Z","run":"f3a9b21c","event":"specialist.start","wf":"summarise","stmt":"summary","specialist":"summariser","model":"claude-sonnet-4-6","prompt":"Summarise this: …"}
 {"ts":"2026-06-19T14:23:02.103Z","run":"f3a9b21c","event":"tool.call","wf":"summarise","stmt":"summary","specialist":"summariser","tool":"search","args":{"query":"example domain"}}
 {"ts":"2026-06-19T14:23:02.313Z","run":"f3a9b21c","event":"tool.done","wf":"summarise","stmt":"summary","specialist":"summariser","tool":"search","success":true,"exit_code":0,"elapsed_ms":210}
-{"ts":"2026-06-19T14:23:06.083Z","run":"f3a9b21c","event":"specialist.done","wf":"summarise","stmt":"summary","specialist":"summariser","stop_reason":"end_turn","turns":2,"input_tokens":2104,"output_tokens":418,"elapsed_ms":4190}
+{"ts":"2026-06-19T14:23:06.083Z","run":"f3a9b21c","event":"specialist.done","wf":"summarise","stmt":"summary","specialist":"summariser","stop_reason":"stop","turns":2,"input_tokens":2104,"output_tokens":418,"elapsed_ms":4190}
 {"ts":"2026-06-19T14:23:06.087Z","run":"f3a9b21c","event":"workflow.done","wf":"summarise","elapsed_ms":5045}
 ```
 

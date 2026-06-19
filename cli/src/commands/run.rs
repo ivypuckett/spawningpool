@@ -38,6 +38,12 @@ pub(crate) async fn run_specialist(
     }
 
     let client = Client::new();
+    let log = crate::log::open_sink(name)?;
+    let spec_log = spawningpool::SpecialistLog {
+        sink: &log,
+        wf: None,
+        stmt: None,
+    };
 
     match output {
         None | Some(OutputFormat::Json) => {
@@ -84,6 +90,7 @@ pub(crate) async fn run_specialist(
                 &tools,
                 &opts,
                 &mut render,
+                Some(&spec_log),
             )
             .await?;
             println!(
@@ -133,6 +140,7 @@ pub(crate) async fn run_specialist(
                 &tools,
                 &opts,
                 &mut render,
+                Some(&spec_log),
             )
             .await
         }
@@ -175,8 +183,9 @@ pub(crate) async fn run_workflow(name: &str, args: &[String]) -> Result<(), Stri
     warn_unset_keys(&closure.specialists, &registry, &keys);
     let client = Client::new();
     let ask = ask_handler();
+    let log = crate::log::open_sink(name)?;
     let result = spawningpool::workflow::eval(
-        root, &registry, &tools, &client, &keys, &inputs, workflows, &ask,
+        name, root, &registry, &tools, &client, &keys, &inputs, workflows, &ask, &log,
     )
     .await
     .map_err(|e| format!("workflow '{name}' failed: {e}"))?;
