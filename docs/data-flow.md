@@ -10,27 +10,22 @@ This is reference material for the orchestration model. For the surface syntax s
 
 ## Overview
 
-```
-                 user prompt
-                     │
-                     ▼
-              ┌──────────────┐   envelope (JSON) / plaintext stream
-   CLI run ──▶│  specialist  │──────────────────────────────────────▶ stdout
-              │  agentic loop│
-              └──────┬───────┘
-        JSON args →  │  ▲  combined stdout+stderr (tool_result/error)
-        env vars     ▼  │
-                 ┌─────────┐
-                 │  tool   │  script: env vars in, two channels out
-                 │ script  │   • stdout+stderr  → logs / model-facing text
-                 └─────────┘   • $SP_OUTPUT_PATH → structured JSON (# output:)
+```mermaid
+flowchart TD
+    user([user prompt]) -->|CLI run| spec["specialist<br/>agentic loop"]
+    spec -->|"envelope (JSON) / plaintext stream"| stdout([stdout])
+    spec -->|"JSON args → env vars (stringified)"| tool["tool script"]
+    tool -->|"combined stdout+stderr → tool_result / tool_error"| spec
+    tool -->|stdout+stderr| logs(["logs / model-facing text"])
+    tool -->|"$SP_OUTPUT_PATH"| structured(["structured JSON (# output:)"])
 
-  ── workflow (values are serde_json::Value, statements run in order) ──
-   inputs ─▶ stmt ─▶ stmt ─▶ … ─▶ last statement value = workflow output
-              │        │
-   run tool ──┘        ├── run specialist ─▶ envelope
-   (env vars,          └── run workflow ───▶ typed JSON in, callee's last value out
-    stringified)
+    subgraph wf [workflow runtime · serde_json::Value · statements in order]
+        inputs(["# inputs:"]) --> stmts["stmt → stmt → …"] --> last(["last statement = workflow output"])
+    end
+    stmts -->|"env vars (stringified)"| tool
+    stmts -->|prompt string| spec
+    stmts -->|"typed JSON in · callee's last value out"| subwf[["run workflow (recurses)"]]
+    subwf -.->|seeds callee inputs| inputs
 ```
 
 Two encodings to keep straight, because they differ:
