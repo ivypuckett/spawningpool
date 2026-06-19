@@ -19,8 +19,6 @@ answer = ask <prompt-expr>
 - The value of `ask` is **always a `string`**: the user's reply, verbatim (§3).
 
 ```
-# inputs:
-
 city = ask "Which city should I check the weather for?"
 
 weather = run tool get_weather { CITY: city }
