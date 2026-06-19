@@ -8,6 +8,8 @@ whole interface.
 - **[Quickstart](#quickstart)** — go from nothing to a running specialist below.
 - **[CLI reference](cli.md)** — every command and flag, with copyable examples.
 - **[Writing tools](tools.md)** — turn a script into a tool a specialist can call.
+- **[Workflow DSL](workflow-dsl.md)** — chain tools and specialists with typed, structured data.
+  - **[Asking the user](ask.md)** — pause a workflow for real-time input from the operator.
 - **[Data flow](data-flow.md)** — how input/output moves across tools, specialists, and workflows.
 - **[Configuration](configuration.md)** — registry location, API keys, env vars.
 
