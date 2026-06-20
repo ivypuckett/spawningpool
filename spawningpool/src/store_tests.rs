@@ -166,3 +166,27 @@ fn workflows_dir_sits_beside_the_registry_file() {
     restore("SPAWNINGPOOL_HOME", saved.1);
     restore("HOME", saved.2);
 }
+
+#[test]
+fn logs_dir_sits_beside_the_registry_file() {
+    let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let saved = (
+        std::env::var_os("SPAWNINGPOOL_REGISTRY"),
+        std::env::var_os("SPAWNINGPOOL_HOME"),
+        std::env::var_os("HOME"),
+    );
+
+    // An explicit registry path puts logs/ next to that file.
+    std::env::set_var("SPAWNINGPOOL_REGISTRY", "/tmp/explicit.json");
+    assert_eq!(logs_dir(), PathBuf::from("/tmp/logs"));
+
+    // Under HOME: ~/.spawningpool/logs.
+    std::env::remove_var("SPAWNINGPOOL_REGISTRY");
+    std::env::remove_var("SPAWNINGPOOL_HOME");
+    std::env::set_var("HOME", "/tmp/user");
+    assert_eq!(logs_dir(), PathBuf::from("/tmp/user/.spawningpool/logs"));
+
+    restore("SPAWNINGPOOL_REGISTRY", saved.0);
+    restore("SPAWNINGPOOL_HOME", saved.1);
+    restore("HOME", saved.2);
+}

@@ -1,8 +1,9 @@
 //! The CLI's structured-log sink (docs/workflow-logging.md).
 //!
 //! Logging is always on: each invocation opens
-//! `logs/<datestamp>-<root>-<run>.ndjson` in the current directory and returns a
-//! [`spawningpool::LogSink`] closure that
+//! `<logs-dir>/<datestamp>-<root>-<run>.ndjson` under the spawningpool home
+//! ([`spawningpool::store::logs_dir`], `~/.spawningpool/logs/` by default) and
+//! returns a [`spawningpool::LogSink`] closure that
 //! stamps every event the library emits with the two universal fields it owns —
 //! `ts` (RFC 3339, millisecond precision, at emit time) and `run` (8 hex chars,
 //! fixed for the invocation) — and writes one NDJSON line. Timestamps and the
@@ -11,6 +12,7 @@
 use std::cell::RefCell;
 use std::fs::File;
 use std::io::{BufWriter, Write};
+use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde_json::Value;
@@ -21,9 +23,12 @@ use serde_json::Value;
 pub(crate) fn open_sink(root: &str) -> Result<impl Fn(Value), String> {
     let now = SystemTime::now();
     let run = run_id(now);
-    let path = log_path(now, root, &run);
-    std::fs::create_dir_all("logs").map_err(|e| format!("can't create logs/ directory: {e}"))?;
-    let file = File::create(&path).map_err(|e| format!("can't open log file {path}: {e}"))?;
+    let dir = spawningpool::store::logs_dir();
+    std::fs::create_dir_all(&dir)
+        .map_err(|e| format!("can't create logs directory {}: {e}", dir.display()))?;
+    let path = log_path(&dir, now, root, &run);
+    let file =
+        File::create(&path).map_err(|e| format!("can't open log file {}: {e}", path.display()))?;
     let writer = RefCell::new(BufWriter::new(file));
 
     Ok(move |event: Value| {
@@ -48,12 +53,17 @@ fn enrich(run: &str, now: SystemTime, mut event: Value) -> Value {
     event
 }
 
-/// `logs/<datestamp>-<root>-<run>.ndjson`, with `root` reduced to filesystem-safe
-/// characters and `<datestamp>` a compact UTC stamp (`YYYYMMDDThhmmssZ`). The
-/// run id disambiguates same-second or concurrent runs of the same root, which a
-/// second-resolution datestamp alone would collide.
-fn log_path(now: SystemTime, root: &str, run: &str) -> String {
-    format!("logs/{}-{}-{}.ndjson", datestamp(now), sanitize(root), run)
+/// `<dir>/<datestamp>-<root>-<run>.ndjson`, with `root` reduced to
+/// filesystem-safe characters and `<datestamp>` a compact UTC stamp
+/// (`YYYYMMDDThhmmssZ`). The run id disambiguates same-second or concurrent runs
+/// of the same root, which a second-resolution datestamp alone would collide.
+fn log_path(dir: &Path, now: SystemTime, root: &str, run: &str) -> PathBuf {
+    dir.join(format!(
+        "{}-{}-{}.ndjson",
+        datestamp(now),
+        sanitize(root),
+        run
+    ))
 }
 
 /// Map anything outside `[A-Za-z0-9._-]` to `_` so a name is a safe filename.
@@ -178,8 +188,13 @@ mod tests {
     #[test]
     fn log_path_combines_datestamp_sanitized_root_and_run() {
         assert_eq!(
-            log_path(at(1_582_934_400, 0), "my/weird name", "82e53793"),
-            "logs/20200229T000000Z-my_weird_name-82e53793.ndjson"
+            log_path(
+                Path::new("/home/u/.spawningpool/logs"),
+                at(1_582_934_400, 0),
+                "my/weird name",
+                "82e53793"
+            ),
+            Path::new("/home/u/.spawningpool/logs/20200229T000000Z-my_weird_name-82e53793.ndjson")
         );
     }
 }

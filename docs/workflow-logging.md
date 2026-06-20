@@ -14,8 +14,10 @@ is a deployment decision; the format is independent of it). Every event is
 self-contained and parseable with `jq` without context from surrounding lines.
 Key order within a line is not significant.
 
-The CLI writes the stream to `logs/<datestamp>-<root>-<run>.ndjson` in the
-working directory, one file per invocation, where `<root>` is the root workflow
+The CLI writes the stream to `<spawningpool-home>/logs/<datestamp>-<root>-<run>.ndjson`
+(`~/.spawningpool/logs/` by default, alongside `tools/` and `workflows/`; it
+tracks `$SPAWNINGPOOL_HOME`/`$SPAWNINGPOOL_REGISTRY`), one file per invocation,
+where `<root>` is the root workflow
 name (or the specialist name for a bare `spawningpool run specialist`) and
 `<run>` is this invocation's run id (so same-second or concurrent runs don't
 collide). The library itself is destination-agnostic: it emits events to an

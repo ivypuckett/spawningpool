@@ -57,6 +57,17 @@ pub fn workflows_dir() -> PathBuf {
     }
 }
 
+/// The directory holding run logs: a `logs/` folder alongside the registry file
+/// (so `~/.spawningpool/logs/` by default). Each invocation writes one NDJSON
+/// file here (docs/workflow-logging.md), rather than into the current working
+/// directory, so logs collect in one place regardless of where the CLI is run.
+pub fn logs_dir() -> PathBuf {
+    match registry_path().parent() {
+        Some(parent) if !parent.as_os_str().is_empty() => parent.join("logs"),
+        _ => PathBuf::from("logs"),
+    }
+}
+
 /// Every non-directory entry in `dir` whose file name, minus a single extension,
 /// equals `name`. A missing directory yields an empty list. Shared by the tool
 /// and workflow folders, which both name their files by stem (so `deploy.spool`
