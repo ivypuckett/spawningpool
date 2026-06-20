@@ -20,7 +20,9 @@ struct WireRequest {
     response_format: Option<serde_json::Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     reasoning_effort: Option<&'static str>,
-    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    // Always sent, even when false: the OpenAI spec defaults `stream` to false,
+    // but some compatible servers (e.g. macOS `fm serve`) default to streaming
+    // when the field is absent, which breaks the non-streaming `complete` path.
     stream: bool,
 }
 
