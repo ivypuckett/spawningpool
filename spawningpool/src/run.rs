@@ -78,8 +78,11 @@ pub async fn run_specialist(
     // Constrained decoding returns the tool's arguments as a single block of
     // JSON text that the adapter rewrites into a tool call; there's nothing
     // meaningful to stream, and the stream path can't do that rewrite, so force
-    // a non-streaming turn when it's in play.
-    let stream = specialist.stream && !opts.constrained_decoding;
+    // a non-streaming turn when it's in play. It's only in play for a forced
+    // call, though — a provider that merely *supports* constrained decoding must
+    // still stream an ordinary (unconstrained) specialist.
+    let constrained_active = opts.constrained_decoding && opts.tool_choice.is_some();
+    let stream = specialist.stream && !constrained_active;
 
     if let Some(log) = log {
         log.emit(log::specialist_start(

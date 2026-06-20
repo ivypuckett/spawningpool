@@ -87,6 +87,33 @@ supports. See [CLI reference → define provider](cli.md#provider) and
 LMSTUDIO_BASE_URL=http://192.168.1.50:1234 spawningpool list models --remote
 ```
 
+## Apple Foundation Models (macOS 27+)
+
+macOS 27 ships the `fm` CLI, which exposes Apple's on-device Foundation Model
+through an OpenAI-compatible server — so spawningpool talks to it with the stock
+`openai-completions` adapter, no Apple-specific code. Start the server (it
+defaults to `127.0.0.1:1976`), then point a provider at it:
+
+```sh
+fm serve                       # leave running; serves /v1/chat/completions
+
+spawningpool define provider apple --api openai \
+  --base-url http://127.0.0.1:1976 --constrained-decoding
+spawningpool define model system --provider apple \
+  --name "Apple Foundation (on-device)" --max-tokens 4096 --context-window 8192
+```
+
+The two model ids `fm serve` exposes are `system` (on-device, always available)
+and `pcc` (Apple Foundation Model on Private Cloud Compute). It needs no API key.
+`--constrained-decoding` is safe to set — `fm serve` honors strict
+`response_format` JSON schemas — and streaming, tool calls, and `reasoning`
+all work through the existing adapter.
+
+> The on-device `system` model is small: forced/constrained tool calls
+> (`--constraint`) are reliable, but *agentic* auto tool-calling is hit-or-miss
+> (the model sometimes returns empty rather than calling). Prefer a constraint
+> when you need a guaranteed structured call.
+
 ## Building from source
 
 ```sh
