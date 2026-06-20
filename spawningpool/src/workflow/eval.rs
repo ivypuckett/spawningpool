@@ -558,11 +558,17 @@ fn eval_access<'ctx>(
                 let idx = eval_expr(expr, env, ctx, visited.clone(), frame).await?;
                 match val {
                     serde_json::Value::Array(arr) => {
-                        let i = idx.as_u64().ok_or_else(|| {
-                            WorkflowError(format!(
-                                "array index must be a non-negative integer, got {idx}"
-                            ))
-                        })? as usize;
+                        // DSL numbers are f64, so an arithmetic-derived index is a
+                        // float-backed JSON number (e.g. `0.0`); accept any
+                        // whole-valued, non-negative number as the index.
+                        let i = idx
+                            .as_f64()
+                            .filter(|n| n.fract() == 0.0 && *n >= 0.0)
+                            .ok_or_else(|| {
+                                WorkflowError(format!(
+                                    "array index must be a non-negative integer, got {idx}"
+                                ))
+                            })? as usize;
                         arr.get(i).cloned().ok_or_else(|| {
                             WorkflowError(format!(
                                 "array index {i} out of bounds (len {})",

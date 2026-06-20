@@ -266,6 +266,46 @@ async fn evaluates_array_index_access() {
 }
 
 #[tokio::test]
+async fn computed_index_accepts_float_backed_whole_number() {
+    // DSL numbers are f64, so an arithmetic-derived index (here `1 - 1`) is a
+    // float-backed JSON number `0.0`. It must index like the integer `0`.
+    let arr = serde_json::json!([10, 20, 30]);
+    let registry = Registry::default();
+    let client = crate::ai::Client::new();
+    let keys = HashMap::new();
+    let workflows = HashMap::new();
+    let ctx = EvalCtx {
+        registry: &registry,
+        tools: &[],
+        client: &client,
+        keys: &keys,
+        workflows: &workflows,
+        ask: &no_ask,
+        log: &no_log,
+    };
+    let frame = Frame {
+        wf: "test",
+        stmt: "val",
+    };
+    let index = Expr::BinOp {
+        op: crate::workflow::BinOp::Sub,
+        lhs: Box::new(Expr::Num(1.0)),
+        rhs: Box::new(Expr::Num(1.0)),
+    };
+    let val = eval_access(
+        arr,
+        &AccessKey::Computed(Box::new(index)),
+        Env::new(),
+        &ctx,
+        Vec::new(),
+        frame,
+    )
+    .await
+    .unwrap();
+    assert_eq!(val, serde_json::json!(10));
+}
+
+#[tokio::test]
 async fn evaluates_if_true_branch() {
     let v = eval_src(r#"v = if (true) "yes", (_) "no""#).await.unwrap();
     assert_eq!(v, serde_json::json!("yes"));
