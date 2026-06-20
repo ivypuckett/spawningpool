@@ -1,0 +1,147 @@
+# showcase.spool — every feature of the workflow DSL (v1) in one workflow.
+#
+# This is a documentation example. It reads as a service-deployment health check
+# and is annotated so each block points at the feature it demonstrates and the
+# section of docs/workflow-dsl.md that specifies it. The tools (deploy, ping,
+# healthcheck, classify), specialists (reporter, classify), and the called
+# workflow (notify) are illustrative; their declared header types are noted
+# inline where they matter for type-checking.
+#
+# Any line whose first non-space character is `#` is a comment (§5.1). Statements
+# are separated by a blank line; a newline *inside* a statement is just
+# whitespace, so a statement may span several lines.
+
+# ── Inputs (§5.1) ─────────────────────────────────────────────────────────────
+# Declared external inputs, supplied at run time (`run workflow ... --arg
+# NAME=value`). The notation matches a tool's `# params:` — a bare NAME is a
+# string; NAME:type is any type in the grammar (§2): string, number, bool, [T]
+# array, and { "k": T } object. The first `# inputs:` line wins.
+# inputs: SERVICE:string, REPLICAS:number, REGIONS:[string], NOTIFY:bool, THRESHOLDS:{ "latencyMs": number, "errorRate": number }
+
+# ── String literals & escapes (§6) ────────────────────────────────────────────
+# String concatenation is `+` over two strings. Escapes: \" \\ \n \t.
+banner = ("Deploying \"" + SERVICE + "\"\n\tacross every region")
+
+# ── Arithmetic, no precedence (§6.3) ──────────────────────────────────────────
+# Evaluation is strictly left-to-right; parentheses are the only grouping. Here
+# `+ - * / % ^` (^ is power) all appear. `(REPLICAS + 1)` then `* 3`, etc.
+capacity = (((REPLICAS + 1) * 3) - 2)
+
+spread = (((REPLICAS ^ 2) % 5) / 2)
+
+# ── Comparison & equality (§6.3) ──────────────────────────────────────────────
+# `< <= > >=` need two numbers or two strings; `== !=` need operands of one type.
+# Both yield bool.
+scaled = (REPLICAS >= 2)
+
+roomy = (capacity > REPLICAS)
+
+sameName = (SERVICE == "api")
+
+shifted = (spread != 0)
+
+# ── Logical operators & unary not (§6.3) ──────────────────────────────────────
+# `&& || !` require bool operands — there is no truthiness, non-bool is an error.
+ready = ((scaled && roomy) || (!sameName))
+
+# ── Object literal & field access (§6.7) ──────────────────────────────────────
+# Object literal keys are quoted strings. `.ident` reads a declared object key;
+# THRESHOLDS is the object input, so `THRESHOLDS.latencyMs` is a number.
+limits = { "latency": THRESHOLDS.latencyMs, "errors": THRESHOLDS.errorRate, "regions": REGIONS }
+
+# `<=` and `&&` over the values just read back out of the object.
+withinBudget = ((limits.latency <= THRESHOLDS.latencyMs) && (limits.errors != 1))
+
+# ── Quoted-key access (§6.7) ──────────────────────────────────────────────────
+# `."key"` reads a key that isn't a bare identifier (here, one with a hyphen).
+meta = { "build-id": "2026.06.20", "signed": true }
+
+buildId = meta."build-id"
+
+# ── Array access: index and computed (§6.7) ───────────────────────────────────
+# `.0` is a literal array index. `.(expr)` is computed access — arrays only in
+# v1; the index expression is evaluated, then used to index.
+firstRegion = REGIONS.0
+
+pickedRegion = REGIONS.(((REPLICAS - REPLICAS)))
+
+# ── run tool, with `else` recovery (§6.6, §7) ─────────────────────────────────
+# `run tool` supplies the tool's `# params:` by name; its value is the tool's
+# `# output:` type — here deploy outputs { "ok": bool, "url": string }. The
+# `else` block turns a non-zero exit into a value instead of aborting: each named
+# arm is keyed by one of the tool's `# exits:` names and `_` is the default.
+# Every arm — and the success path — must produce the output type.
+deployment = run tool deploy { SERVICE: SERVICE, REPLICAS: REPLICAS } else {
+  conflict: { "ok": false, "url": "" },
+  timeout: { "ok": false, "url": "" },
+  _: { "ok": false, "url": "" }
+}
+
+# ── Iteration: for / foreach, including nesting (§6.5) ─────────────────────────
+# Map over an array; the body is a single sub-expression and the value is the
+# array of results. `foreach` is an alias for `for`. ping outputs
+# { "host": string, "reachable": bool, "ms": number }, so `pings` is an array of
+# that object type.
+pings = foreach [region: REGIONS] (run tool ping { HOST: region })
+
+# A for body can itself be a for — that is how nesting is expressed.
+grid = for [from: REGIONS] (for [to: REGIONS] ({ "from": from, "to": to }))
+
+# ── Conditional repetition: do … while … max (§6.5.1) ─────────────────────────
+# Re-runs the body until `while` is false; the condition sees the assigned
+# variable (`health`) bound to the body's latest value, and `max` caps the
+# attempts. Valid only as a whole right-hand side. healthcheck outputs
+# { "ready": bool }.
+health = do (run tool healthcheck { SERVICE: SERVICE }) while (!health.ready) max (10)
+
+# ── Selection: if … (_) (§6.4) ────────────────────────────────────────────────
+# The first true branch wins; conditions are bool and the chain must end with the
+# `(_)` default. All result arms share a type (here, string).
+status = if ((deployment.ok && health.ready)) "healthy", (deployment.ok) "degraded", (_) "failed"
+
+# ── run specialist (§4, §6.6) ─────────────────────────────────────────────────
+# Runs a specialist on a string prompt; the value is the unified envelope (§4):
+# { output, thinking, inputTokens, ... toolCalls }. An unconstrained specialist's
+# answer is `.output`.
+summary = run specialist reporter (((banner + "\n") + "Result: ") + status)
+
+# Verb alias `spawn` for `run`, kind alias `lenny` for `specialist`. A
+# constrained specialist's forced call is read from `.toolCalls.0.output`.
+severity = spawn lenny classify ("Classify deploy severity: " + status)
+
+verdict = severity.toolCalls.0.output
+
+# ── Asking the user: ask … else (§6.8) ────────────────────────────────────────
+# Pauses for a human reply (a string). The `else` fallback is the string used
+# when the run is headless or the user cancels.
+confirm = ask (("Notify owners for " + SERVICE) + "? (yes/no)") else "no"
+
+# ── run workflow (§6.6) ───────────────────────────────────────────────────────
+# Invokes another workflow by name, supplying its declared `# inputs:` by typed
+# value (a bool arrives as a bool, not a stringified env var). `overseer` is an
+# alias for `workflow`. The value is the callee's inferred result type — assume
+# notify's last statement yields { "sent": bool }.
+notified = run overseer notify { TARGET: SERVICE, MESSAGE: summary.output, URGENT: (NOTIFY && confirm == "yes") }
+
+# ── Result (§5) ───────────────────────────────────────────────────────────────
+# The last statement's value is the workflow's output: printed as JSON and, when
+# `$SP_OUTPUT_PATH` is set, also written there — so this workflow is composable
+# as a tool by any outer runner.
+result = {
+  "service": SERVICE,
+  "banner": banner,
+  "status": status,
+  "verdict": verdict,
+  "buildId": buildId,
+  "url": deployment.url,
+  "firstRegion": firstRegion,
+  "pickedRegion": pickedRegion,
+  "regionPings": pings,
+  "regionGrid": grid,
+  "capacity": capacity,
+  "spread": spread,
+  "ready": ready,
+  "withinBudget": withinBudget,
+  "confirmed": (confirm == "yes"),
+  "notified": notified.sent
+}
