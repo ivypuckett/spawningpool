@@ -121,7 +121,7 @@ confirm = ask (("Notify owners for " + SERVICE) + "? (yes/no)") else "no"
 # value (a bool arrives as a bool, not a stringified env var). `overseer` is an
 # alias for `workflow`. The value is the callee's inferred result type — assume
 # notify's last statement yields { "sent": bool }.
-notified = run overseer notify { TARGET: SERVICE, MESSAGE: summary.output, URGENT: (NOTIFY && confirm == "yes") }
+notified = run overseer notify { TARGET: SERVICE, MESSAGE: summary.output, URGENT: (NOTIFY && (confirm == "yes")) }
 
 # ── Result (§5) ───────────────────────────────────────────────────────────────
 # The last statement's value is the workflow's output: printed as JSON and, when
