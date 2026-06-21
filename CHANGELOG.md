@@ -6,12 +6,69 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-Foundations for the [Workflow DSL](docs/workflow-dsl.md): the typed tool headers
-and structured-tool-output plumbing the DSL builds on. The orchestration language
-itself (parser, type-checker, evaluator) is not included yet.
+## [0.3.0] - 2026-06-20
+
+The Workflow DSL release. spawningpool gains a typed orchestration language for
+composing tools, specialists, and other workflows — parser, type-checker, and
+evaluator — wired into the CLI through restructured `run` subcommands, with
+NDJSON run logging, Mermaid diagrams, and an `ask` channel back to a human
+mid-run. Also adds Apple Foundation Models support and a batch of TUI fixes.
 
 ### Added
 
+- **The Workflow DSL** (`spawningpool::workflow`,
+  [docs/workflow-dsl.md](docs/workflow-dsl.md)). A typed orchestration language
+  with a tokenizer + recursive-descent `parse`, a static `check` type-checker
+  that infers variable types from literals, tool `# output:` declarations, and
+  the fixed specialist envelope, and an async `eval` evaluator. Statements run in
+  sequence and the last statement's value is the workflow result. Supports
+  literals, arithmetic and string `+`, `if`/`for`/`foreach`, object/array access,
+  and the run, loop, comparison, and `ask` constructs below.
+- **`run <kind> <name>` invocation, unified across the language and CLI.** One
+  verb selects the namespace explicitly — `run tool get_weather { CITY: city }`,
+  `run specialist reporter ("Summarize: " + weather.summary)`,
+  `run workflow deploy { ENV: env }` — so a tool and a workflow may share a file
+  name without ambiguity. Workflows compose: a workflow can `run workflow`
+  another, inputs flow as typed JSON (not stringified env vars), the result type
+  is inferred from the callee's last statement, and cycles are rejected at
+  type-check time. The verb/kind keywords accept the CLI aliases (`run`↔`spawn`,
+  `workflow`↔`overseer`, `specialist`↔`lenny`/`ling`).
+- **CLI `run` subcommands.** `run` is now `run specialist <name> --prompt …`
+  (name positional, matching `show`/`delete`), `run workflow <name>` (reads a DSL
+  source from a `workflows/` folder beside the registry, parses, type-checks,
+  evaluates, and prints the result JSON), and `run tool <name> --arg K=V …` (runs
+  a tool script directly and prints its structured output). `spawn` aliases the
+  `run` parent.
+- **Workflow inputs and tool-style output.** A workflow declares `# inputs:`
+  using the same typed-param notation as a tool's `# params:`; values are supplied
+  with `run workflow --arg KEY=VALUE`, coerced to the declared type and validated
+  before the run. When invoked with `$SP_OUTPUT_PATH` set, the result is written
+  there as well as to stdout, so a workflow obeys the same I/O contract as a tool
+  and is composable as one.
+- **Workflow run logging (NDJSON).** A run emits structured events —
+  `workflow.start`/`done`/`error`, `tool.call`/`done`, `specialist.start`/`done`,
+  and `ask.prompt`/`answer` — through an injected `LogSink` (mirroring
+  `AskHandler`, so the library stays front-end-agnostic). The CLI writes one file
+  per invocation, `logs/<datestamp>-<root>-<run>.ndjson`, with an RFC 3339
+  timestamp and a per-run id (no date or random dependency added). The `logs/`
+  folder lives beside the registry (`~/.spawningpool/logs/` by default, tracking
+  `$SPAWNINGPOOL_HOME`/`$SPAWNINGPOOL_REGISTRY`). Format:
+  [docs/workflow-logging.md](docs/workflow-logging.md).
+- **Mermaid rendering for workflows.** `spawningpool::workflow::mermaid` renders a
+  workflow's implicit data flow as a Mermaid `flowchart` — one node per input and
+  statement, an edge wherever one statement references another's variable, and
+  node shapes per run kind. Exposed as `show workflow <name> --format mermaid`
+  (source is the default), filling in the previously missing `Show::Workflow`.
+- **Apple Foundation Models support.** macOS 27's `fm serve` exposes the
+  on-device Foundation Model as an OpenAI-compatible server, so spawningpool
+  drives it through the existing `openai-completions` adapter with no
+  Apple-specific code. Setup recipe in
+  [docs/configuration.md](docs/configuration.md).
+- **Workflows can mix providers.** The evaluator resolves each specialist's API
+  key and constrained-decoding flag from its own provider in the registry (the
+  CLI passes a provider→key map), instead of stamping one shared key onto every
+  call. A workflow whose specialists span providers now runs; `run workflow`
+  warns up front about any referenced specialist whose provider API key is unset.
 - **A type system for tool headers** (`spawningpool::types`). The notation
   `string`/`number`/`bool`/`[T]`/`{ "k": T, ... }` parses into a `Type` and
   lowers to JSON Schema, reusing the existing tool-call validator and schema
@@ -59,6 +116,66 @@ itself (parser, type-checker, evaluator) is not included yet.
   without one the workflow aborts. The CLI prompts on stderr and reads stdin when
   interactive, treating a run with `$SP_OUTPUT_PATH` set or a non-TTY stdin as
   headless.
+- **`delete` confirmation.** The CLI `delete` previews the references it would
+  orphan before removing anything and prompts for confirmation; `--yes`/`-y`
+  skips the prompt. Existence is checked without mutating the registry, so a
+  declined or absent delete leaves it untouched.
+
+### Changed
+
+- **`run` is now subcommand-based.** *(Breaking.)* `run --specialist <name>
+  --prompt …` becomes `run specialist <name> --prompt …`. Scripts that called
+  `run --specialist` must move the name to a positional argument under the
+  `specialist` subcommand.
+
+### Fixed
+
+- **TUI: the terminal is restored on a panic.** A panic unwinding out of the
+  event loop skipped `teardown()`, leaving the shell in raw mode on the alternate
+  screen with the backtrace stair-stepping across it. A wrapped panic hook now
+  runs `teardown()` before the default handler prints.
+- **TUI: a failed tool call reports its exit status.** `ScriptRun` carries the
+  exit `code` (or `None` when signalled), and `run_tool` reports "exited with
+  status N — see its output above" (or "(no output)") instead of a bare "exited
+  non-zero".
+- **TUI: a failed rename no longer diverges from disk.** Rename reloads from the
+  file when `persist()` fails, so in-memory state matches what was saved.
+- **OpenAI adapter robustness.** `stream` is always serialized (even when
+  `false`), since `fm serve` defaults to streaming when the field is absent,
+  which had broken the non-streaming `complete` path. Streaming is now suppressed
+  only when constrained decoding is actually active (a forced tool call present),
+  not merely because the provider declares the capability — previously any
+  specialist on a `--constrained-decoding` provider silently lost streaming.
+- The workflow evaluator's `+` arm uses `num_val()` like its sibling operators
+  instead of an `unwrap()`, and a `cargo doc` intra-doc link warning in
+  `domain.rs` is resolved.
+
+### Documentation
+
+- The **Workflow DSL v1 spec** ([docs/workflow-dsl.md](docs/workflow-dsl.md)) and
+  the orchestration stance it reconciles.
+- **[docs/data-flow.md](docs/data-flow.md)** — how input/output crosses every
+  boundary (specialist loop, tool channels, the three run kinds), as contract
+  cards with an overview diagram.
+- **[docs/channels.md](docs/channels.md)** — names the three information channels
+  (data, ask, log) and how they relate, differ, and fail, cross-linked from each
+  deep-dive doc.
+- **[docs/workflow-logging.md](docs/workflow-logging.md)** — the NDJSON event
+  format for workflow observability.
+- A **showcase workflow** exercising every DSL feature, the `# exits:` directive
+  in [docs/tools.md](docs/tools.md), the `fm serve` recipe in
+  [docs/configuration.md](docs/configuration.md), the `delete` confirmation /
+  `--yes` and the `tui` command and keys in [docs/cli.md](docs/cli.md), and a
+  note on the registry's single-writer assumption.
+
+### Internal
+
+- Inline `#[cfg(test)]` modules extracted into sibling `*_tests.rs` files via
+  `#[path]`, and the `openai`/`anthropic` providers, the workflow lexer, and
+  `cli/src/main.rs` split into submodules — so reading a production module no
+  longer pulls in its tests or unrelated code. No behavior change.
+- End-to-end tests for the specialist run loop (agentic path, the `MAX_TURNS`
+  cap, and a constrained single-call run) against a local mock server.
 
 ## [0.2.0] - 2026-06-12
 
@@ -179,5 +296,6 @@ well — and call them from the CLI or manage them in an interactive terminal UI
 - The Tauri desktop app was removed; the interactive experience is the built-in
   `spawningpool tui`.
 
+[0.3.0]: https://github.com/ivypuckett/spawningpool/releases/tag/v0.3.0
 [0.2.0]: https://github.com/ivypuckett/spawningpool/releases/tag/v0.2.0
 [0.1.0]: https://github.com/ivypuckett/spawningpool/releases/tag/v0.1.0
