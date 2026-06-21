@@ -65,11 +65,16 @@ pub(crate) enum RunTarget {
     #[command(aliases = ["lenny", "ling"])]
     Specialist {
         name: String,
-        #[arg(long)]
-        prompt: String,
-        /// Output format. Defaults to `json` (machine-readable envelope with
-        /// output, thinking, token counts, stopReason, model, specialist,
-        /// turns, and toolCalls). Use `plaintext` for streaming terminal output.
+        /// The prompt. May also be given with `--prompt`, or piped on stdin
+        /// when neither is present.
+        prompt: Option<String>,
+        /// The prompt (alternative to the positional argument).
+        #[arg(long = "prompt", value_name = "PROMPT", conflicts_with = "prompt")]
+        prompt_flag: Option<String>,
+        /// Output format. Defaults to `plaintext` (streaming terminal output) at
+        /// a terminal and `json` (machine-readable envelope with output,
+        /// thinking, token counts, stopReason, model, specialist, turns, and
+        /// toolCalls) when stdout is piped. Pass this to force either.
         #[arg(long, value_name = "FORMAT")]
         output: Option<OutputFormat>,
     },

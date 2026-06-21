@@ -51,12 +51,14 @@ spawningpool define specialist namer --provider anthropic --model claude-opus-4-
   --system-prompt 'You suggest one short, memorable name. Reply with only the name.'
 
 # 4. Run it
-spawningpool run --specialist namer --prompt 'A CLI that spawns AI specialists'
+spawningpool run specialist namer --prompt 'A CLI that spawns AI specialists'
 ```
 
-By default `run` prints a JSON result envelope (the assistant text is the
-`output` field); pipe it to `jq -r .output` for just the text, or pass
-`--output plaintext` to stream the response to the terminal.
+At a terminal `run` streams the response as plaintext; when its output is piped
+it prints a JSON result envelope instead (the assistant text is the `output`
+field — pipe it to `jq -r .output` for just the text). Pass `--output
+json|plaintext` to force either. The prompt may also be given positionally or
+piped on stdin instead of with `--prompt`.
 
 Browse and manage everything in an interactive terminal UI with `spawningpool tui`.
 

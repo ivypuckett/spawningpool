@@ -27,8 +27,9 @@ async fn run(cli: Cli) -> Result<(), String> {
             RunTarget::Specialist {
                 name,
                 prompt,
+                prompt_flag,
                 output,
-            } => commands::run::run_specialist(&name, &prompt, output).await,
+            } => commands::run::run_specialist(&name, prompt_flag.or(prompt), output).await,
             RunTarget::Workflow { name, args } => commands::run::run_workflow(&name, &args).await,
             RunTarget::Tool { name, args } => commands::run::run_tool(&name, &args),
         },

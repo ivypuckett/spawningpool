@@ -161,8 +161,14 @@ async fn run_specialist_interactive(terminal: &mut Tui, name: &str) -> Result<()
     let prompt = read_line(&format!("prompt for '{name}'> "));
     let outcome = match prompt {
         Some(prompt) if !prompt.trim().is_empty() => {
-            // Reuse the CLI's full run-and-render path.
-            crate::commands::run::run_specialist(name, prompt.trim(), None).await
+            // Reuse the CLI's full run-and-render path, forcing the streaming
+            // plaintext renderer this interactive chat is built around.
+            crate::commands::run::run_specialist(
+                name,
+                Some(prompt.trim().to_string()),
+                Some(crate::cli::OutputFormat::Plaintext),
+            )
+            .await
         }
         _ => Ok(()),
     };

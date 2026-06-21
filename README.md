@@ -26,10 +26,11 @@ is just an executable script in the `tools/` folder beside the registry, not a
 registry entry (see [Writing tools](docs/tools.md)).
 
 ```bash
-# run (alias: spawn) — prints a JSON result envelope by default;
-# use --output plaintext for streaming terminal output
-spawningpool run --specialist name --prompt 'prompt' \
-  --output json|plaintext     # optional, defaults to json
+# run (alias: spawn) — at a terminal, streams plaintext; when piped, prints a
+# JSON result envelope. Pass --output to force one or the other. The prompt may
+# be given positionally, with --prompt, or piped on stdin.
+spawningpool run specialist name --prompt 'prompt' \
+  --output json|plaintext     # optional; defaults to plaintext at a TTY, json when piped
 
 # define a provider — a wire protocol (--api) + endpoint (--base-url) + key env var
 spawningpool define provider name \

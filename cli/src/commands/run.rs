@@ -1,5 +1,5 @@
 use std::collections::{BTreeSet, HashMap, VecDeque};
-use std::io::{IsTerminal, Write};
+use std::io::{IsTerminal, Read, Write};
 
 use spawningpool::ai::{Client, StopReason};
 use spawningpool::workflow::AskOutcome;
@@ -9,9 +9,21 @@ use crate::cli::OutputFormat;
 
 pub(crate) async fn run_specialist(
     name: &str,
-    prompt: &str,
+    prompt: Option<String>,
     output: Option<OutputFormat>,
 ) -> Result<(), String> {
+    let prompt = resolve_prompt(prompt)?;
+    let prompt = prompt.as_str();
+    // With no explicit --output, stream plaintext at a terminal but emit the
+    // machine-readable JSON envelope when stdout is piped, so interactive use is
+    // readable and scripted use stays parseable.
+    let format = output.unwrap_or_else(|| {
+        if std::io::stdout().is_terminal() {
+            OutputFormat::Plaintext
+        } else {
+            OutputFormat::Json
+        }
+    });
     let registry = spawningpool::store::load()?;
     let specialist = registry
         .specialists
@@ -45,8 +57,8 @@ pub(crate) async fn run_specialist(
         stmt: None,
     };
 
-    match output {
-        None | Some(OutputFormat::Json) => {
+    match format {
+        OutputFormat::Json => {
             let mut output = String::new();
             let mut thinking = String::new();
             let mut input_tokens: u32 = 0;
@@ -109,7 +121,7 @@ pub(crate) async fn run_specialist(
             );
             Ok(())
         }
-        Some(OutputFormat::Plaintext) => {
+        OutputFormat::Plaintext => {
             // Render the run to the terminal: assistant text on stdout (streamed
             // live), usage and tool failures on stderr, tool output on stdout.
             // `printed_text` tracks streamed deltas so a trailing newline lands
@@ -145,6 +157,33 @@ pub(crate) async fn run_specialist(
             .await
         }
     }
+}
+
+/// Resolve the prompt for a `run specialist` call. A prompt given on the command
+/// line (positionally or via `--prompt`) is used verbatim. Otherwise it's read
+/// from stdin when that's piped — supporting `cat issue.txt | spawningpool run
+/// specialist triager` — with surrounding whitespace trimmed and an empty read
+/// rejected. With no prompt and an interactive stdin there's nothing to run, so
+/// it errors with the three ways to supply one.
+fn resolve_prompt(prompt: Option<String>) -> Result<String, String> {
+    if let Some(prompt) = prompt {
+        return Ok(prompt);
+    }
+    if std::io::stdin().is_terminal() {
+        return Err(
+            "no prompt given. Pass it as an argument, with --prompt, or pipe it on stdin."
+                .to_string(),
+        );
+    }
+    let mut buf = String::new();
+    std::io::stdin()
+        .read_to_string(&mut buf)
+        .map_err(|e| format!("failed to read prompt from stdin: {e}"))?;
+    let prompt = buf.trim();
+    if prompt.is_empty() {
+        return Err("the prompt read from stdin was empty.".to_string());
+    }
+    Ok(prompt.to_string())
 }
 
 /// Execute a workflow from the `workflows/` folder by name: parse it, resolve
