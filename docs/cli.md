@@ -225,7 +225,7 @@ spawningpool delete tool ping
 Runs a specialist, a workflow, or a tool. Alias: `spawningpool spawn`.
 
 ```sh
-spawningpool run specialist <name> --prompt '<prompt>' [--output <json|plaintext>]
+spawningpool run specialist <name> [<prompt>] [--prompt '<prompt>'] [--output <json|plaintext>]
 spawningpool run workflow <name> [--arg KEY=VALUE]...
 spawningpool run tool <name> [--arg KEY=VALUE]...
 ```
@@ -238,9 +238,15 @@ Instantiates a specialist with a prompt and runs it.
 spawningpool run specialist netop --prompt 'Why can I not reach example.com?'
 ```
 
-`--output` chooses the format:
+The prompt may be given positionally, with `--prompt`, or piped on stdin (read
+when neither is present, e.g. `cat issue.txt | spawningpool run specialist
+triager`). The two command-line forms are mutually exclusive.
 
-- **`json`** (the default) — a single machine-readable JSON object on stdout
+`--output` chooses the format. With no `--output`, it defaults to `plaintext`
+when stdout is a terminal and `json` when stdout is piped — so interactive runs
+are readable and scripted ones stay parseable:
+
+- **`json`** — a single machine-readable JSON object on stdout
   once the run finishes, with fields: `output` (assistant text), `thinking`,
   `inputTokens`, `outputTokens`, `stopReason`, `model`, `specialist`, `turns`,
   and `toolCalls` (each `{name, success, output}`). Nothing is streamed and

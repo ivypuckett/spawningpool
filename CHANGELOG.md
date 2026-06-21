@@ -6,6 +6,27 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **`run specialist` reads its prompt from a positional argument or stdin.** The
+  prompt may now be given positionally (`spawningpool run specialist netop 'why?'`)
+  or piped on stdin (`cat issue.txt | spawningpool run specialist triager`), in
+  addition to `--prompt`. The positional and `--prompt` forms are mutually
+  exclusive; stdin is used only when neither is present.
+
+### Changed
+
+- **`run specialist` output now defaults to the terminal.** With no `--output`,
+  it streams `plaintext` when stdout is a terminal and prints the `json` envelope
+  when stdout is piped, so interactive runs are readable and scripted runs stay
+  parseable. Pass `--output json|plaintext` to force either.
+
+### Fixed
+
+- **README quickstart commands.** The `run --specialist <name>` examples in
+  `README.md` and `cli/README.md` were stale; the command is `run specialist
+  <name>` (name positional). Corrected.
+
 ## [0.3.0] - 2026-06-20
 
 The Workflow DSL release. spawningpool gains a typed orchestration language for
