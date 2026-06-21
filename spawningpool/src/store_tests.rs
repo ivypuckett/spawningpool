@@ -66,6 +66,75 @@ fn save_to_replaces_existing_atomically() {
 }
 
 #[test]
+fn save_checked_refuses_a_stale_write() {
+    // A save whose underlying file changed since load is rejected, untouched.
+    let dir = std::env::temp_dir().join(format!("sp_store_stale_{}", std::process::id()));
+    let path = dir.join("registry.json");
+
+    // Initial state on disk, then load it with a version token.
+    let mut original = Registry::default();
+    original.providers.insert(
+        "a".into(),
+        crate::ProviderDef {
+            name: "a".into(),
+            api: crate::ai::Api::AnthropicMessages,
+            base_url: String::new(),
+            api_key_env: None,
+            constrained_decoding: false,
+        },
+    );
+    save_to(&path, &original).unwrap();
+    let (mut loaded, version) = load_versioned_from(&path).unwrap();
+
+    // A concurrent writer changes the file (different size, so the token differs
+    // regardless of mtime resolution).
+    let mut concurrent = original.clone();
+    concurrent.providers.insert(
+        "b-with-a-longer-name".into(),
+        crate::ProviderDef {
+            name: "b-with-a-longer-name".into(),
+            api: crate::ai::Api::AnthropicMessages,
+            base_url: String::new(),
+            api_key_env: None,
+            constrained_decoding: false,
+        },
+    );
+    save_to(&path, &concurrent).unwrap();
+
+    // Our save, built from the now-stale snapshot, is refused.
+    loaded.providers.remove("a");
+    let err = save_to_checked(&path, &loaded, version).unwrap_err();
+    assert!(err.contains("changed on disk"), "{err}");
+
+    // The concurrent writer's change survives untouched.
+    assert_eq!(load_from(&path).unwrap(), concurrent);
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn save_checked_writes_when_unchanged() {
+    // With no intervening writer, the checked save lands and reports a version.
+    let dir = std::env::temp_dir().join(format!("sp_store_fresh_{}", std::process::id()));
+    let path = dir.join("registry.json");
+
+    // A missing file loads as an absent version; the first checked save creates it.
+    let (mut registry, version) = load_versioned_from(&path).unwrap();
+    registry.providers.insert(
+        "a".into(),
+        crate::ProviderDef {
+            name: "a".into(),
+            api: crate::ai::Api::AnthropicMessages,
+            base_url: String::new(),
+            api_key_env: None,
+            constrained_decoding: false,
+        },
+    );
+    save_to_checked(&path, &registry, version).unwrap();
+    assert_eq!(load_from(&path).unwrap(), registry);
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
 fn missing_file_loads_empty() {
     let path = std::env::temp_dir().join("sp_absent_dir_xyz/registry.json");
     assert_eq!(load_from(&path).unwrap(), Registry::default());

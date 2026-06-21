@@ -229,8 +229,11 @@ fn edit(terminal: &mut Tui, target: EditTarget) -> Result<(), String> {
 /// file, edit inline, then re-parse and save. A parse/validation failure leaves
 /// the registry untouched and surfaces the reason.
 fn edit_registry_entity(terminal: &mut Tui, target: EditTarget) -> Result<(), String> {
-    // Load fresh so we serialize (and later re-save) the on-disk truth.
-    let mut registry = spawningpool::store::load()?;
+    // Load fresh so we serialize (and later re-save) the on-disk truth, keeping
+    // a version token: the editor session is long, so another writer (a `define`
+    // run, a second TUI) may change the registry meanwhile. The checked save
+    // below refuses to clobber such a change instead of losing it silently.
+    let (mut registry, version) = spawningpool::store::load_versioned()?;
     let (key, json) = entity_json(&registry, &target)?;
 
     let path = std::env::temp_dir().join(format!(
@@ -253,7 +256,7 @@ fn edit_registry_entity(terminal: &mut Tui, target: EditTarget) -> Result<(), St
     let edited = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
     std::fs::remove_file(&path).ok();
     apply_entity_json(&mut registry, &target, &key, &edited)?;
-    spawningpool::store::save(&registry)
+    spawningpool::store::save_checked(&registry, version).map(|_| ())
 }
 
 /// Serialize the targeted entity to pretty JSON, returning its current key too.

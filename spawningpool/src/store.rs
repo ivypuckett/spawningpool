@@ -15,10 +15,14 @@
 //! concurrently, the later rename wins and the earlier process's change is
 //! silently lost (e.g. a long-lived TUI session saving over a `define` run
 //! meanwhile in another terminal). The data is never corrupted, only an update
-//! dropped. Closing that window — an mtime check that refuses a stale
-//! overwrite — is tracked as future work, not handled here.
+//! dropped. To close that window, [`load_versioned`] captures the file's
+//! modified-time and size as a token and [`save_checked`] refuses to overwrite
+//! when the file changed since — turning a silent lost update into a visible
+//! "reload and retry". The plain [`load`]/[`save`] pair keeps the unchecked
+//! behavior for read-only and short-lived read-modify-write callers.
 
 use std::path::{Path, PathBuf};
+use std::time::SystemTime;
 
 use crate::Registry;
 
@@ -142,6 +146,70 @@ pub fn save_to(path: &Path, registry: &Registry) -> Result<(), String> {
         let _ = std::fs::remove_file(&tmp);
         format!("failed to write {}: {e}", path.display())
     })
+}
+
+/// A token capturing the registry file's on-disk state — its modified time and
+/// size — at the moment it was loaded. Compared at save time by [`save_checked`]
+/// to detect a concurrent writer. `None` means the file did not exist when
+/// loaded, so the first write creates it.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct Version(Option<(SystemTime, u64)>);
+
+/// The current version of the file at `path`: its modified time and size, or an
+/// absent token if the file is missing (or its mtime is unreadable, treated as
+/// absent so any real version compares unequal and forces a reload).
+fn version_of(path: &Path) -> Version {
+    match std::fs::metadata(path) {
+        Ok(meta) => Version(meta.modified().ok().map(|t| (t, meta.len()))),
+        Err(_) => Version(None),
+    }
+}
+
+/// Load the registry along with a [`Version`] token of the file it came from, so
+/// a later [`save_checked`] can refuse to overwrite a concurrent change.
+pub fn load_versioned() -> Result<(Registry, Version), String> {
+    load_versioned_from(&registry_path())
+}
+
+/// Load the registry and its [`Version`] from an explicit path.
+pub fn load_versioned_from(path: &Path) -> Result<(Registry, Version), String> {
+    // Stat *before* reading so the token can only be older than the bytes we
+    // read, never newer: a write racing this load yields a stale token (a
+    // harmless false "changed on disk"), never a fresh one that would let a lost
+    // update slip through the check.
+    let version = version_of(path);
+    let registry = load_from(path)?;
+    Ok((registry, version))
+}
+
+/// Save the registry to its resolved path only if the file still matches
+/// `expected` — the [`Version`] captured by [`load_versioned`].
+pub fn save_checked(registry: &Registry, expected: Version) -> Result<Version, String> {
+    save_to_checked(&registry_path(), registry, expected)
+}
+
+/// Save the registry to an explicit path only if the file still matches
+/// `expected`. If another writer changed the file since it was loaded, the write
+/// is refused with an actionable error and the on-disk registry is left
+/// untouched, so the caller can reload rather than silently clobber that change.
+/// On success returns the new [`Version`] of the written file.
+///
+/// The check is optimistic: a small window remains between the stat and the
+/// rename, which a local single-user tool can accept. See the [module-level
+/// concurrency note](self#concurrency).
+pub fn save_to_checked(
+    path: &Path,
+    registry: &Registry,
+    expected: Version,
+) -> Result<Version, String> {
+    if version_of(path) != expected {
+        return Err(format!(
+            "{} changed on disk since it was loaded — reload and retry",
+            path.display()
+        ));
+    }
+    save_to(path, registry)?;
+    Ok(version_of(path))
 }
 
 #[cfg(test)]
