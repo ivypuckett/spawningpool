@@ -2,6 +2,16 @@
 
 Goal: create hyper-specific specialists with minimal system prompts that do one thing and one thing well.
 
+## Status: Complete, paused
+
+From Ivy: after the workflow engine was built, the next step is having a top-level agent who manages the pool. At this point, I didn't want spawningpool to compete as a full coding harness so I looked (again) at pi. The pi-crew and subagents skills are able to continue this experiment closely enough. In general, if someone else is solving the problem already, I want to focus on problems which haven't been solved yet. SO this experiment is on pause.
+
+Development will resume if interest picks up.
+
+Open issues documents a few minor bugs, PRs are welcome. Other than that, the project does exactly what it claims. I've verified this on my local machine running LM Studio.
+
+This project reaffirmed for me how important the domain model and narrow interfaces are. This is what kept me and the agent on the same page, making this 15k LOC project coherent. The agent itself kept finding bugs and eliminating dead code because we both had a solid understanding of our domain and goals.
+
 ## Requirements
 
 - Creating/updating specialists needs to be trivial.
