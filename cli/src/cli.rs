@@ -77,6 +77,12 @@ pub(crate) enum RunTarget {
         /// toolCalls) when stdout is piped. Pass this to force either.
         #[arg(long, value_name = "FORMAT")]
         output: Option<OutputFormat>,
+        /// Hold a multi-turn conversation: run the prompt, then keep reading
+        /// follow-ups that share the same context. Requires a terminal and
+        /// streams plaintext, so it can't be combined with `--output`. End with
+        /// Ctrl-D or a blank line. Not available for constrained specialists.
+        #[arg(long, short = 'i', conflicts_with = "output")]
+        interactive: bool,
     },
     /// Execute a workflow from the `workflows/` folder, by name.
     #[command(alias = "overseer")]

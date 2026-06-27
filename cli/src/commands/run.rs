@@ -11,7 +11,11 @@ pub(crate) async fn run_specialist(
     name: &str,
     prompt: Option<String>,
     output: Option<OutputFormat>,
+    interactive: bool,
 ) -> Result<(), String> {
+    if interactive {
+        return interactive_session(name, prompt).await;
+    }
     let prompt = resolve_prompt(prompt)?;
     let prompt = prompt.as_str();
     // With no explicit --output, stream plaintext at a terminal but emit the
@@ -156,6 +160,117 @@ pub(crate) async fn run_specialist(
             )
             .await
         }
+    }
+}
+
+/// Hold an interactive, multi-turn conversation with a specialist: run the first
+/// prompt (when one is given on the command line), then loop reading follow-ups
+/// from the terminal that share the same context. Streams plaintext, like
+/// `--output plaintext`. Ends on EOF (Ctrl-D) or a blank line. A failed turn ends
+/// the session, since it may leave the conversation mid-exchange.
+async fn interactive_session(name: &str, first_prompt: Option<String>) -> Result<(), String> {
+    if !std::io::stdin().is_terminal() {
+        return Err(
+            "interactive mode needs a terminal to read follow-ups from.\n  \
+             Drop --interactive and pass a prompt (argument, --prompt, or stdin) for a single run."
+                .to_string(),
+        );
+    }
+
+    let registry = spawningpool::store::load()?;
+    let specialist = registry
+        .specialists
+        .get(name)
+        .ok_or_else(|| format!("unknown specialist: {name}"))?;
+
+    // Resolve the specialist's tools up front, so a missing or unreadable tool
+    // fails before the conversation starts rather than mid-run.
+    let tools = spawningpool::tools::resolve_all(
+        &spawningpool::store::tools_dir(),
+        specialist.tool_names(),
+    )?;
+
+    let mut opts = specialist.complete_options();
+    if let Some(provider) = registry.providers.get(&specialist.provider) {
+        if let Some(env) = provider.api_key_env.as_ref() {
+            if let Ok(key) = std::env::var(env) {
+                opts.api_key = Some(key);
+            }
+        }
+        opts.constrained_decoding = provider.constrained_decoding;
+    }
+
+    let client = Client::new();
+    let log = crate::log::open_sink(name)?;
+    let spec_log = spawningpool::SpecialistLog {
+        sink: &log,
+        wf: None,
+        stmt: None,
+    };
+
+    // Rejects a constrained specialist up front, before any prompt is read.
+    let mut session = spawningpool::Session::new(&registry, specialist, &tools, &opts)?;
+
+    eprintln!("Interactive session with '{name}'. Ctrl-D or a blank line ends it.");
+
+    // An initial CLI-given prompt seeds the first turn; a blank one is ignored.
+    let mut pending = first_prompt
+        .map(|p| p.trim().to_string())
+        .filter(|p| !p.is_empty());
+    loop {
+        let prompt = match pending.take() {
+            Some(prompt) => prompt,
+            None => match read_prompt_line()? {
+                Some(prompt) => prompt,
+                None => break,
+            },
+        };
+
+        // Plaintext streaming renderer, rebuilt per turn so `printed_text` resets.
+        let mut printed_text = false;
+        let mut render = |event: RunEvent<'_>| match event {
+            RunEvent::TextDelta(delta) => {
+                print!("{delta}");
+                std::io::stdout().flush().ok();
+                printed_text = true;
+            }
+            RunEvent::Text(text) => println!("{text}"),
+            RunEvent::ThinkingDelta(_) | RunEvent::Thinking(_) | RunEvent::TurnDone { .. } => {}
+            RunEvent::Usage(usage) => {
+                if std::mem::take(&mut printed_text) {
+                    println!();
+                }
+                eprintln!("[usage] {} in / {} out", usage.input, usage.output);
+            }
+            RunEvent::ToolRan { name, output, .. } => println!("[tool {name}]\n{output}"),
+            RunEvent::ToolFailed { name, message } => eprintln!("[tool {name}] {message}"),
+        };
+
+        if let Err(e) = session
+            .turn(&client, &prompt, &mut render, Some(&spec_log))
+            .await
+        {
+            eprintln!("error: {e}");
+            break;
+        }
+    }
+    Ok(())
+}
+
+/// Read one prompt line from the terminal for the interactive loop, writing the
+/// `you> ` cue to stderr so stdout carries only the specialist's output. Returns
+/// `Ok(None)` on EOF (Ctrl-D) or a blank line — both end the session.
+fn read_prompt_line() -> Result<Option<String>, String> {
+    eprint!("you> ");
+    std::io::stderr().flush().ok();
+    let mut line = String::new();
+    match std::io::stdin().read_line(&mut line) {
+        Ok(0) => Ok(None),
+        Ok(_) => {
+            let prompt = line.trim().to_string();
+            Ok((!prompt.is_empty()).then_some(prompt))
+        }
+        Err(e) => Err(format!("failed to read input: {e}")),
     }
 }
 

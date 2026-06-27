@@ -16,20 +16,26 @@ use tokio::net::TcpListener;
 use spawningpool::ai::{Api, Client, CompleteOptions, Reasoning};
 use spawningpool::types::{Param, Type};
 use spawningpool::{
-    run_specialist, ModelDef, ProviderDef, Registry, Specialist, SpecialistLog, ToolDef,
+    run_specialist, ModelDef, ProviderDef, Registry, Session, Specialist, SpecialistLog, ToolDef,
 };
 
 /// Spawn an HTTP/1.1 server that answers each request with the next body in
 /// `bodies`, falling back to `fallback` once the queue drains. Returns the base
-/// URL and a counter of how many requests it served. Each response sets
+/// URL, a counter of how many requests it served, and the raw text of each
+/// request it received (so a test can assert what was sent). Each response sets
 /// `Connection: close`, so the client opens a fresh connection — a fresh accept
 /// — per turn, letting one server serve a whole multi-turn run.
-async fn mock_seq(bodies: Vec<String>, fallback: String) -> (String, Arc<AtomicUsize>) {
+async fn mock_seq(
+    bodies: Vec<String>,
+    fallback: String,
+) -> (String, Arc<AtomicUsize>, Arc<Mutex<Vec<String>>>) {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     let queue = Arc::new(Mutex::new(VecDeque::from(bodies)));
     let hits = Arc::new(AtomicUsize::new(0));
     let hits_task = hits.clone();
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let requests_task = requests.clone();
     tokio::spawn(async move {
         loop {
             let Ok((mut socket, _)) = listener.accept().await else {
@@ -37,7 +43,11 @@ async fn mock_seq(bodies: Vec<String>, fallback: String) -> (String, Arc<AtomicU
             };
             // Drain enough of the request to unblock the client, then reply.
             let mut buf = [0u8; 16384];
-            let _ = socket.read(&mut buf).await;
+            let n = socket.read(&mut buf).await.unwrap_or(0);
+            requests_task
+                .lock()
+                .unwrap()
+                .push(String::from_utf8_lossy(&buf[..n]).into_owned());
             let body = queue
                 .lock()
                 .unwrap()
@@ -52,7 +62,7 @@ async fn mock_seq(bodies: Vec<String>, fallback: String) -> (String, Arc<AtomicU
             let _ = socket.flush().await;
         }
     });
-    (format!("http://{addr}"), hits)
+    (format!("http://{addr}"), hits, requests)
 }
 
 /// An OpenAI completion that calls `tool` with `{"NAME": "world"}`.
@@ -150,7 +160,8 @@ async fn agentic_loop_runs_a_tool_then_settles_on_an_answer() {
     let (greet, script) = echo_tool("greet", "greeted");
     let answer = final_answer_body("All greeted.");
     // Turn 1 calls the tool; turn 2 returns the final answer.
-    let (base_url, hits) = mock_seq(vec![tool_call_body("greet"), answer.clone()], answer).await;
+    let (base_url, hits, _reqs) =
+        mock_seq(vec![tool_call_body("greet"), answer.clone()], answer).await;
     let registry = registry_at(base_url);
     let spec = specialist("greeter", vec!["greet".into()], None);
 
@@ -183,7 +194,8 @@ async fn agentic_loop_runs_a_tool_then_settles_on_an_answer() {
 async fn logs_specialist_lifecycle_with_its_tool_calls() {
     let (greet, script) = echo_tool("greet", "greeted");
     let answer = final_answer_body("All greeted.");
-    let (base_url, _hits) = mock_seq(vec![tool_call_body("greet"), answer.clone()], answer).await;
+    let (base_url, _hits, _reqs) =
+        mock_seq(vec![tool_call_body("greet"), answer.clone()], answer).await;
     let registry = registry_at(base_url);
     let spec = specialist("greeter", vec!["greet".into()], None);
 
@@ -265,7 +277,7 @@ async fn agentic_loop_stops_after_max_turns() {
     let (greet, script) = echo_tool("greet", "looping");
     // The fallback (empty queue) means every turn gets another tool call, so the
     // specialist never settles and must be cut off at the turn cap.
-    let (base_url, hits) = mock_seq(vec![], tool_call_body("greet")).await;
+    let (base_url, hits, _reqs) = mock_seq(vec![], tool_call_body("greet")).await;
     let registry = registry_at(base_url);
     let spec = specialist("looper", vec!["greet".into()], None);
 
@@ -294,7 +306,7 @@ async fn constrained_specialist_makes_exactly_one_forced_call() {
     // Only the forced call is offered; a second turn would be a bug, so the
     // fallback is harmless and `hits` proves the loop stopped after one.
     let call = tool_call_body("classify");
-    let (base_url, hits) = mock_seq(vec![call.clone()], call).await;
+    let (base_url, hits, _reqs) = mock_seq(vec![call.clone()], call).await;
     let registry = registry_at(base_url);
     let spec = specialist("classifier", vec![], Some("classify".into()));
 
@@ -318,4 +330,111 @@ async fn constrained_specialist_makes_exactly_one_forced_call() {
     assert!(events
         .iter()
         .any(|e| e.contains("ToolRan") && e.contains("classified")));
+}
+
+/// Collect the assistant `Text` blocks an observer sees into `out`.
+fn capture_text(out: &mut String) -> impl FnMut(spawningpool::RunEvent<'_>) + '_ {
+    move |e| {
+        if let spawningpool::RunEvent::Text(t) = e {
+            out.push_str(t);
+        }
+    }
+}
+
+#[tokio::test]
+async fn session_carries_context_across_human_turns() {
+    // A plain chat specialist (no tools): each turn settles on a final answer.
+    let answer_a = final_answer_body("first answer");
+    let answer_b = final_answer_body("second answer");
+    let (base_url, hits, reqs) =
+        mock_seq(vec![answer_a.clone(), answer_b.clone()], answer_b.clone()).await;
+    let registry = registry_at(base_url);
+    let spec = specialist("chatter", vec![], None);
+    let opts = CompleteOptions::default();
+    let mut session = Session::new(&registry, &spec, &[], &opts).unwrap();
+
+    let mut out = String::new();
+    session
+        .turn(
+            &Client::new(),
+            "first question",
+            &mut capture_text(&mut out),
+            None,
+        )
+        .await
+        .unwrap();
+    assert_eq!(out, "first answer");
+
+    out.clear();
+    session
+        .turn(
+            &Client::new(),
+            "second question",
+            &mut capture_text(&mut out),
+            None,
+        )
+        .await
+        .unwrap();
+    assert_eq!(out, "second answer");
+
+    // Two human turns, one model call each.
+    assert_eq!(hits.load(Ordering::SeqCst), 2);
+
+    // The second request resends the whole conversation — both questions and the
+    // first answer — proving the context carried across turns.
+    let reqs = reqs.lock().unwrap();
+    assert_eq!(reqs.len(), 2);
+    assert!(reqs[0].contains("first question"));
+    assert!(!reqs[0].contains("second question"));
+    assert!(reqs[1].contains("first question"));
+    assert!(reqs[1].contains("first answer"));
+    assert!(reqs[1].contains("second question"));
+}
+
+#[tokio::test]
+async fn session_rejects_a_constrained_specialist() {
+    let registry = registry_at("http://127.0.0.1:1".into());
+    let spec = specialist("classifier", vec![], Some("classify".into()));
+    let opts = spec.complete_options();
+
+    // A constrained specialist forces one call and has nothing to converse about,
+    // so the session refuses to start — with a message naming the forced tool and
+    // pointing at the single-shot command instead.
+    let err = match Session::new(&registry, &spec, &[], &opts) {
+        Ok(_) => panic!("expected the constrained specialist to be rejected"),
+        Err(e) => e,
+    };
+    assert!(err.contains("constrained"), "{err}");
+    assert!(err.contains("classify"), "{err}");
+    assert!(err.contains("run specialist classifier"), "{err}");
+}
+
+#[tokio::test]
+async fn session_errors_when_context_window_is_exhausted() {
+    // Shrink the window so one turn's usage (8 in + 2 out) plus the model's
+    // max_tokens overflows it: the second turn's pre-check must trip.
+    let answer = final_answer_body("ok");
+    let (base_url, _hits, _reqs) = mock_seq(vec![answer.clone()], answer.clone()).await;
+    let mut registry = registry_at(base_url);
+    registry
+        .models
+        .get_mut("local-model")
+        .unwrap()
+        .context_window = 260;
+    let spec = specialist("chatter", vec![], None);
+    let opts = CompleteOptions::default();
+    let mut session = Session::new(&registry, &spec, &[], &opts).unwrap();
+
+    // First turn succeeds: no prior usage yet, so the pre-check is skipped.
+    session
+        .turn(&Client::new(), "hi", &mut |_| {}, None)
+        .await
+        .unwrap();
+    // Second turn trips it: 10 used + 256 max_tokens > 260 window.
+    let err = session
+        .turn(&Client::new(), "again", &mut |_| {}, None)
+        .await
+        .unwrap_err();
+    assert!(err.contains("context window"), "{err}");
+    assert!(err.contains("Start a new session"), "{err}");
 }

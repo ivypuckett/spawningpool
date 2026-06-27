@@ -167,6 +167,7 @@ async fn run_specialist_interactive(terminal: &mut Tui, name: &str) -> Result<()
                 name,
                 Some(prompt.trim().to_string()),
                 Some(crate::cli::OutputFormat::Plaintext),
+                false,
             )
             .await
         }

@@ -72,6 +72,44 @@ pub async fn run_specialist(
 ) -> Result<(), String> {
     let model = registry.resolve_model(specialist)?;
     let mut ctx = build_context(specialist, prompt, tools);
+    run_to_settle(
+        client, &model, specialist, tools, opts, &mut ctx, prompt, observer, log,
+    )
+    .await?;
+    Ok(())
+}
+
+/// The token usage a single human turn ran up, summed across its agentic loop.
+/// Returned by [`run_to_settle`] so a [`Session`] can track how full the context
+/// is getting.
+struct TurnOutcome {
+    input_tokens: u32,
+    output_tokens: u32,
+}
+
+/// Drive the agentic loop against `ctx` — which must already end with the user's
+/// turn — until the model settles on an answer (or, for a constrained
+/// specialist, after its single forced call), or the [`MAX_TURNS`] cap is hit.
+/// The cap counts the tool-calling turns *within this one human turn*, so it
+/// resets every time a [`Session`] calls back in.
+///
+/// `prompt` is the user input that opened this turn, recorded on the
+/// `specialist.start` event. When `log` is `Some`, the turn is bracketed with
+/// `specialist.start` / `specialist.done` (docs/workflow-logging.md): one pair
+/// per human turn. On success the model's final answer is appended to `ctx`, so
+/// the next turn sees the whole conversation.
+#[allow(clippy::too_many_arguments)]
+async fn run_to_settle(
+    client: &Client,
+    model: &Model,
+    specialist: &Specialist,
+    tools: &[ToolDef],
+    opts: &CompleteOptions,
+    ctx: &mut Context,
+    prompt: &str,
+    observer: &mut dyn FnMut(RunEvent<'_>),
+    log: Option<&SpecialistLog<'_>>,
+) -> Result<TurnOutcome, String> {
     // A constrained specialist makes a single forced call; a tools specialist
     // runs agentically until it stops calling tools.
     let agentic = specialist.constraint.is_none();
@@ -93,8 +131,8 @@ pub async fn run_specialist(
             prompt,
         ));
     }
-    // Aggregate metadata for `specialist.done`: an invocation is atomic from the
-    // workflow's view, so per-turn token and stop-reason data is summed here.
+    // Aggregate metadata for `specialist.done`: a turn is atomic from the
+    // workflow's view, so per-loop token and stop-reason data is summed here.
     let started = std::time::Instant::now();
     let mut turns = 0u32;
     let mut input_tokens = 0u32;
@@ -104,7 +142,7 @@ pub async fn run_specialist(
     let mut settled = false;
     for _ in 0..MAX_TURNS {
         let (message, usage, stop_reason) =
-            one_turn(client, &model, &ctx, opts, stream, observer).await?;
+            one_turn(client, model, ctx, opts, stream, observer).await?;
         turns += 1;
         input_tokens += usage.input;
         output_tokens += usage.output;
@@ -125,8 +163,10 @@ pub async fn run_specialist(
             })
             .collect();
 
-        // No tool calls means the model produced its final answer.
+        // No tool calls means the model produced its final answer. Keep it in the
+        // context so a follow-up turn (in a `Session`) sees the answer it gave.
         if calls.is_empty() {
+            ctx.messages.push(message);
             settled = true;
             break;
         }
@@ -171,7 +211,10 @@ pub async fn run_specialist(
                 started.elapsed().as_millis() as u64,
             ));
         }
-        return Ok(());
+        return Ok(TurnOutcome {
+            input_tokens,
+            output_tokens,
+        });
     }
 
     Err(format!(
@@ -180,6 +223,111 @@ pub async fn run_specialist(
          outputs above, tighten its system prompt, or reduce the tools it can call.",
         specialist.name
     ))
+}
+
+/// A live, multi-turn specialist conversation.
+///
+/// [`run_specialist`] builds a fresh [`Context`] per call and drops it on return,
+/// so every invocation starts cold. A `Session` instead keeps the accumulating
+/// context alive across successive human turns ([`Session::turn`]), letting a
+/// front-end drive a back-and-forth chat where the specialist remembers what was
+/// said. Each turn is its own `specialist.start`/`specialist.done` bracket and
+/// gets a fresh [`MAX_TURNS`] budget.
+///
+/// A constrained specialist makes a single forced tool call and has nothing to
+/// converse about, so [`Session::new`] rejects one rather than pretending.
+pub struct Session<'a> {
+    specialist: &'a Specialist,
+    tools: &'a [ToolDef],
+    opts: &'a CompleteOptions,
+    model: Model,
+    ctx: Context,
+    /// The previous turn's total tokens (input + output). The next turn resends
+    /// the whole transcript, so this is a lower bound on its input — used to stop
+    /// before a request would overflow the model's context window. `0` means no
+    /// turn has completed yet, so the check is skipped.
+    last_total_tokens: u32,
+}
+
+impl<'a> Session<'a> {
+    /// Start a conversation with `specialist`. `tools` is its resolved tool set
+    /// and `opts` the request options (reasoning, any sourced API key); both must
+    /// outlive the session. Errors if the specialist is constrained (can't
+    /// converse) or its model can't be resolved.
+    pub fn new(
+        registry: &Registry,
+        specialist: &'a Specialist,
+        tools: &'a [ToolDef],
+        opts: &'a CompleteOptions,
+    ) -> Result<Self, String> {
+        if let Some(constraint) = &specialist.constraint {
+            return Err(format!(
+                "specialist '{}' is constrained to force a single call to '{constraint}', so it \
+                 can't hold an interactive conversation.\n  \
+                 Run it for that one forced call with `spawningpool run specialist {}` instead.",
+                specialist.name, specialist.name,
+            ));
+        }
+        let model = registry.resolve_model(specialist)?;
+        let mut ctx = Context::new(Some(specialist.system_prompt.clone()), Vec::new());
+        ctx.tools = tools.iter().map(ToolDef::to_tool).collect();
+        Ok(Session {
+            specialist,
+            tools,
+            opts,
+            model,
+            ctx,
+            last_total_tokens: 0,
+        })
+    }
+
+    /// Run one human turn: append `prompt` to the conversation, drive the
+    /// specialist until it settles, and keep its answer in the context for the
+    /// next turn. Progress is reported through `observer` and, when `log` is
+    /// `Some`, bracketed with `specialist.*` events just like [`run_specialist`].
+    pub async fn turn(
+        &mut self,
+        client: &Client,
+        prompt: &str,
+        observer: &mut dyn FnMut(RunEvent<'_>),
+        log: Option<&SpecialistLog<'_>>,
+    ) -> Result<(), String> {
+        // Each turn resends the whole transcript, so the previous turn's total is
+        // a lower bound on this turn's input. If that already leaves no room for a
+        // full reply, the request would overflow the context window — stop with a
+        // clear explanation rather than letting the provider reject it. (v1 keeps
+        // the full history; trimming/summarizing it is future work.)
+        if self.last_total_tokens > 0
+            && self.last_total_tokens.saturating_add(self.model.max_tokens)
+                > self.model.context_window
+        {
+            return Err(format!(
+                "this conversation no longer fits in {}'s {}-token context window — the last \
+                 turn alone used {} tokens, leaving no room for another {}-token reply.\n  \
+                 Start a new session to keep going; interactive runs don't yet trim or \
+                 summarize history.",
+                self.model.name,
+                self.model.context_window,
+                self.last_total_tokens,
+                self.model.max_tokens,
+            ));
+        }
+        self.ctx.messages.push(Message::user(prompt));
+        let outcome = run_to_settle(
+            client,
+            &self.model,
+            self.specialist,
+            self.tools,
+            self.opts,
+            &mut self.ctx,
+            prompt,
+            observer,
+            log,
+        )
+        .await?;
+        self.last_total_tokens = outcome.input_tokens.saturating_add(outcome.output_tokens);
+        Ok(())
+    }
 }
 
 /// Run one model turn, reporting any assistant text and thinking (streamed live
