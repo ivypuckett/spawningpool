@@ -14,7 +14,7 @@ pub use script::{prepare_script, run_script, summarize, ScriptError, ScriptRun, 
 
 pub use log::{LogSink, SpecialistLog};
 
-pub use run::{run_specialist, RunEvent};
+pub use run::{run_specialist, RunEvent, Session};
 
 pub use domain::{
     EntityKind, MissingRef, ModelDef, ProviderDef, Referrer, Registry, Specialist, ToolDef,

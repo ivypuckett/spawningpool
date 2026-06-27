@@ -8,6 +8,17 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Interactive specialist sessions (`run specialist --interactive`/`-i`).** Hold
+  a multi-turn conversation with a specialist: it runs your prompt, then keeps
+  reading follow-ups from the terminal that share one accumulating context, so it
+  remembers what was said. Streams plaintext (can't combine with `--output`);
+  ends on Ctrl-D or a blank line. Each turn is its own `specialist.start`/
+  `specialist.done` log bracket with a fresh 16-turn tool budget. Constrained
+  specialists are rejected (a single forced call has nothing to converse about),
+  and a conversation that outgrows the model's context window stops with a clear
+  message rather than a provider error. Backed by a new library type,
+  `spawningpool::Session`.
+
 - **`run specialist` reads its prompt from a positional argument or stdin.** The
   prompt may now be given positionally (`spawningpool run specialist netop 'why?'`)
   or piped on stdin (`cat issue.txt | spawningpool run specialist triager`), in

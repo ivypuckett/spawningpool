@@ -225,7 +225,7 @@ spawningpool delete tool ping
 Runs a specialist, a workflow, or a tool. Alias: `spawningpool spawn`.
 
 ```sh
-spawningpool run specialist <name> [<prompt>] [--prompt '<prompt>'] [--output <json|plaintext>]
+spawningpool run specialist <name> [<prompt>] [--prompt '<prompt>'] [--output <json|plaintext>] [--interactive]
 spawningpool run workflow <name> [--arg KEY=VALUE]...
 spawningpool run tool <name> [--arg KEY=VALUE]...
 ```
@@ -268,6 +268,24 @@ spawningpool run specialist writer --prompt 'tagline' --output plaintext
 The API key is sourced from the provider's `--api-key-env` variable at run time;
 if it isn't set you'll get an auth error (bare `spawningpool` warns about this in advance).
 An agentic specialist that never stops calling tools fails after 16 turns.
+
+`--interactive` (`-i`) holds a multi-turn conversation instead of a single run.
+It runs the prompt (given on the command line, or asked for if omitted), then
+keeps reading follow-ups that share one accumulating context, so the specialist
+remembers what was said:
+
+```sh
+spawningpool run specialist netop --interactive
+```
+
+It requires a terminal and streams plaintext, so it can't be combined with
+`--output`. The `you> ` cue and token usage go to stderr; the specialist's
+answers go to stdout. End the session with Ctrl-D or a blank line. Each turn is
+its own run — a fresh 16-turn tool budget and its own `specialist.start`/`.done`
+log bracket. A constrained specialist can't converse (it forces a single call),
+so `--interactive` is rejected for one. If the conversation outgrows the model's
+context window, the session stops with an explanation rather than a provider
+error; start a new session to continue (history isn't yet trimmed or summarized).
 
 ### `run workflow`
 
